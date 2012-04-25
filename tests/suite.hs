@@ -19,7 +19,6 @@ testFingerprint fp kf = do
 	let (OpenPGP.Message [packet]) = decode bs
 	assertEqual ("for " ++ fp) kf (OpenPGP.fingerprint packet)
 
-{-
 testVerifyMessage :: FilePath -> FilePath -> Assertion
 testVerifyMessage keyring message = do
 	keys <- fmap decode $ LZ.readFile $ "tests/data/" ++ keyring
@@ -27,6 +26,7 @@ testVerifyMessage keyring message = do
 	let verification = OpenPGP.verify keys m 0
 	assertEqual (keyring ++ " for " ++ message) True verification
 
+{-
 prop_sign_and_verify :: OpenPGP.Message -> String -> OpenPGP.HashAlgorithm -> String -> String -> Bool
 prop_sign_and_verify secring kid halgo filename msg =
 	let
@@ -49,8 +49,7 @@ tests secring =
 			testCase "000016-006.public_key" (testFingerprint "000016-006.public_key" "AF95E4D7BAC521EE9740BED75E9F1523413262DC"),
 			testCase "000027-006.public_key" (testFingerprint "000027-006.public_key" "1EB20B2F5A5CC3BEAFD6E5CB7732CF988A63EA86"),
 			testCase "000035-006.public_key" (testFingerprint "000035-006.public_key" "CB7933459F59C70DF1C3FBEEDEDC3ECF689AF56D")
-		]
-{-
+		],
 		testGroup "Message verification" [
 			--testCase "uncompressed-ops-dsa" (testVerifyMessage "pubring.gpg" "uncompressed-ops-dsa.gpg"),
 			--testCase "uncompressed-ops-dsa-sha384" (testVerifyMessage "pubring.gpg" "uncompressed-ops-dsa-sha384.txt.gpg"),
@@ -58,7 +57,8 @@ tests secring =
 			testCase "compressedsig" (testVerifyMessage "pubring.gpg" "compressedsig.gpg"),
 			testCase "compressedsig-zlib" (testVerifyMessage "pubring.gpg" "compressedsig-zlib.gpg"),
 			testCase "compressedsig-bzip2" (testVerifyMessage "pubring.gpg" "compressedsig-bzip2.gpg")
-		],
+		]
+{-
 		testGroup "Signing" [
 			testProperty "Crypto signatures verify" (prop_sign_and_verify secring "FEF8AFA0F661C3EE")
 		]
