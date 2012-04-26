@@ -14,6 +14,7 @@ import Crypto.Hash.SHA512 (SHA512)
 import Crypto.Hash.SHA224 (SHA224)
 import qualified Data.Serialize as Serialize (encode)
 import qualified Crypto.Cipher.RSA as RSA
+import qualified Crypto.Cipher.DSA as DSA
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LZ
 
@@ -86,20 +87,40 @@ rsaKey k =
 	n = fromJustMPI $ lookup 'n' k'
 	k' = OpenPGP.key k
 
+dsaKey :: OpenPGP.Packet -> DSA.PublicKey
+dsaKey k =
+	DSA.PublicKey (param 'p', param 'g', param 'q') (param 'y')
+	where
+	param c = fromJustMPI $ lookup c k'
+	k' = OpenPGP.key k
+
 -- | Verify a message signature
 verify :: OpenPGP.Message    -- ^ Keys that may have made the signature
           -> OpenPGP.Message -- ^ LiteralData message to verify
           -> Int             -- ^ Index of signature to verify (0th, 1st, etc)
           -> Bool
 verify keys message sigidx =
-	case RSA.verify bhash padding (rsaKey k) signature_over raw_sig of
-		Left _ -> False
-		Right v -> v
+	case OpenPGP.key_algorithm sig of
+		OpenPGP.DSA -> dsaVerify
+		alg | alg `elem` [OpenPGP.RSA,OpenPGP.RSA_S] -> rsaVerify
+		    | otherwise -> error ("Unsupported key algorithm " ++ show alg)
 	where
+	dsaVerify = let k' = dsaKey k in
+		case DSA.verify dsaSig (dsaTruncate k' . bhash) k' signature_over of
+			Left x -> False
+			Right v -> v
+	rsaVerify =
+		case RSA.verify (bhash) padding (rsaKey k) signature_over rsaSig of
+			Left _ -> False
+			Right v -> v
+	rsaSig = toStrictBS $ LZ.drop 2 $ encode (head $ OpenPGP.signature sig)
+	dsaSig = let [OpenPGP.MPI r, OpenPGP.MPI s] = OpenPGP.signature sig in
+		(r, s)
+	dsaTruncate (DSA.PublicKey (_,_,q) _) bs =
+		BS.take (integerBytesize q) bs
 	bhash = fst . hash hash_algo . toLazyBS
 	padding = emsa_pkcs1_v1_5_hash_padding hash_algo
 	hash_algo = OpenPGP.hash_algorithm sig
-	raw_sig = toStrictBS $ LZ.drop 2 $ encode (OpenPGP.signature sig)
 	signature_over = toStrictBS $ dta `LZ.append` OpenPGP.trailer sig
 	Just k = OpenPGP.signature_issuer sig >>= find_key keys
 	sig = sigs !! sigidx
