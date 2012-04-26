@@ -3,6 +3,8 @@ module Data.OpenPGP.CryptoAPI where
 import Numeric
 import Data.Word
 import Data.Char
+import Data.Bits
+import Data.List (find)
 import Data.Binary
 import Crypto.Classes hiding (hash)
 import Crypto.Hash.MD5 (MD5)
@@ -17,6 +19,7 @@ import qualified Crypto.Cipher.RSA as RSA
 import qualified Crypto.Cipher.DSA as DSA
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LZ
+import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString)
 
 import qualified Data.OpenPGP as OpenPGP
 
@@ -83,19 +86,25 @@ fromJustMPI _ = error "Not a Just MPI, Data.OpenPGP.CryptoAPI"
 integerBytesize :: Integer -> Int
 integerBytesize i = (length $ LZ.unpack $ encode (OpenPGP.MPI i)) - 2
 
+keyParam :: Char -> OpenPGP.Packet -> Integer
+keyParam c k = fromJustMPI $ lookup c (OpenPGP.key k)
+
+privateRSAkey :: OpenPGP.Packet -> RSA.PrivateKey
+privateRSAkey k =
+	RSA.PrivateKey (integerBytesize n) n d 0 0 0 0 0
+	where
+	d = keyParam 'd' k
+	n = keyParam 'n' k
+
 rsaKey :: OpenPGP.Packet -> RSA.PublicKey
 rsaKey k =
-	RSA.PublicKey (integerBytesize n) n (fromJustMPI $ lookup 'e' k')
+	RSA.PublicKey (integerBytesize n) n (keyParam 'e' k)
 	where
-	n = fromJustMPI $ lookup 'n' k'
-	k' = OpenPGP.key k
+	n = keyParam 'n' k
 
 dsaKey :: OpenPGP.Packet -> DSA.PublicKey
-dsaKey k =
-	DSA.PublicKey (param 'p', param 'g', param 'q') (param 'y')
-	where
-	param c = fromJustMPI $ lookup c k'
-	k' = OpenPGP.key k
+dsaKey k = DSA.PublicKey (keyParam 'p' k, keyParam 'g' k, keyParam 'q' k)
+	(keyParam 'y' k)
 
 -- | Verify a message signature
 verify :: OpenPGP.Message    -- ^ Keys that may have made the signature
@@ -129,3 +138,86 @@ verify keys message sigidx =
 	sig = sigs !! sigidx
 	(sigs, (OpenPGP.LiteralDataPacket {OpenPGP.content = dta}):_) =
 		OpenPGP.signatures_and_data message
+
+-- | Sign data or key/userID pair.
+sign :: OpenPGP.Message    -- ^ SecretKeys, one of which will be used
+        -> OpenPGP.Message -- ^ Message containing data or key to sign, and optional signature packet
+        -> OpenPGP.HashAlgorithm -- ^ HashAlgorithm to use in signature
+        -> String  -- ^ KeyID of key to choose or @[]@ for first
+        -> Integer -- ^ Timestamp for signature (unless sig supplied)
+        -> OpenPGP.Packet
+sign keys message hsh keyid timestamp =
+	-- WARNING: this style of update is unsafe on most fields
+	-- it is safe on signature and hash_head, though
+	sig {
+		OpenPGP.signature = [OpenPGP.MPI $ toNum final],
+		OpenPGP.hash_head = toNum $ BS.take 2 final
+	}
+	where
+	Right final = RSA.sign bhash padding (privateRSAkey k) dta
+	dta     = toStrictBS $ case signOver of {
+		OpenPGP.LiteralDataPacket {OpenPGP.content = c} -> c;
+		_ -> LZ.concat $ OpenPGP.fingerprint_material signOver ++ [
+			LZ.singleton 0xB4,
+			encode (fromIntegral (length firstUserID) :: Word32),
+			LZ.fromString firstUserID
+		]
+	} `LZ.append` OpenPGP.trailer sig
+	sig     = findSigOrDefault (find OpenPGP.isSignaturePacket m)
+	padding = emsa_pkcs1_v1_5_hash_padding hsh
+	bhash   = fst . hash hsh . toLazyBS
+	toNum x = BS.foldl (\a b -> a `shiftL` 8 .|. fromIntegral b) 0 x
+
+	-- Either a SignaturePacket was found, or we need to make one
+	findSigOrDefault (Just s) = let kalgo = OpenPGP.key_algorithm s in
+		OpenPGP.signaturePacket
+		(OpenPGP.version s)
+		(OpenPGP.signature_type s)
+		(
+			if kalgo `elem` [OpenPGP.DSA,OpenPGP.RSA,OpenPGP.RSA_E] then
+				kalgo
+			else
+				undefined
+		)
+		hsh -- force hash algorithm
+		(OpenPGP.hashed_subpackets s)
+		(OpenPGP.unhashed_subpackets s)
+		(OpenPGP.hash_head s)
+		(OpenPGP.signature s)
+	findSigOrDefault Nothing  = OpenPGP.signaturePacket
+		4
+		defaultStype
+		OpenPGP.RSA
+		hsh
+		([
+			-- Do we really need to pass in timestamp just for the default?
+			OpenPGP.SignatureCreationTimePacket $ fromIntegral timestamp,
+			OpenPGP.IssuerPacket keyid'
+		] ++ (case signOver of
+			OpenPGP.LiteralDataPacket {} -> []
+			_ -> [] -- TODO: OpenPGP.KeyFlagsPacket [0x01, 0x02]
+		))
+		[]
+		undefined
+		undefined
+
+	keyid'  = reverse $ take 16 $ reverse $ fingerprint k
+	Just k  = find_key keys keyid
+
+	Just (OpenPGP.UserIDPacket firstUserID) = find isUserID m
+
+	defaultStype = case signOver of
+		OpenPGP.LiteralDataPacket {OpenPGP.format = f} ->
+			if f == 'b' then 0x00 else 0x01
+		_ -> 0x13
+
+	Just signOver = find isSignable m
+	OpenPGP.Message m = message
+
+	isSignable (OpenPGP.LiteralDataPacket {}) = True
+	isSignable (OpenPGP.PublicKeyPacket {})   = True
+	isSignable (OpenPGP.SecretKeyPacket {})   = True
+	isSignable _                              = False
+
+	isUserID (OpenPGP.UserIDPacket {})        = True
+	isUserID _                                = False

@@ -26,7 +26,6 @@ testVerifyMessage keyring message = do
 	let verification = OpenPGP.verify keys m 0
 	assertEqual (keyring ++ " for " ++ message) True verification
 
-{-
 prop_sign_and_verify :: OpenPGP.Message -> String -> OpenPGP.HashAlgorithm -> String -> String -> Bool
 prop_sign_and_verify secring kid halgo filename msg =
 	let
@@ -39,7 +38,6 @@ prop_sign_and_verify secring kid halgo filename msg =
 		sig = OpenPGP.sign secring (OpenPGP.Message [m]) halgo kid 12341234
 	in
 		OpenPGP.verify secring (OpenPGP.Message [m,sig]) 0
--}
 
 tests :: OpenPGP.Message -> [Test]
 tests secring =
@@ -57,12 +55,10 @@ tests secring =
 			testCase "compressedsig" (testVerifyMessage "pubring.gpg" "compressedsig.gpg"),
 			testCase "compressedsig-zlib" (testVerifyMessage "pubring.gpg" "compressedsig-zlib.gpg"),
 			testCase "compressedsig-bzip2" (testVerifyMessage "pubring.gpg" "compressedsig-bzip2.gpg")
-		]
-{-
+		],
 		testGroup "Signing" [
 			testProperty "Crypto signatures verify" (prop_sign_and_verify secring "FEF8AFA0F661C3EE")
 		]
--}
 	]
 
 main :: IO ()
