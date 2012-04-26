@@ -7,6 +7,7 @@ import Data.Bits
 import Data.List (find)
 import Data.Binary
 import Crypto.Classes hiding (hash)
+import Crypto.Random
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
 import Crypto.Hash.RIPEMD160 (RIPEMD160)
@@ -108,9 +109,13 @@ rsaKey k =
 	where
 	n = keyParam 'n' k
 
+privateDSAkey :: OpenPGP.Packet -> DSA.PrivateKey
+privateDSAkey k = DSA.PrivateKey
+	(keyParam 'p' k, keyParam 'g' k, keyParam 'q' k) (keyParam 'x' k)
+
 dsaKey :: OpenPGP.Packet -> DSA.PublicKey
-dsaKey k = DSA.PublicKey (keyParam 'p' k, keyParam 'g' k, keyParam 'q' k)
-	(keyParam 'y' k)
+dsaKey k = DSA.PublicKey
+	(keyParam 'p' k, keyParam 'g' k, keyParam 'q' k) (keyParam 'y' k)
 
 -- | Verify a message signature
 verify :: OpenPGP.Message    -- ^ Keys that may have made the signature
@@ -146,21 +151,32 @@ verify keys message sigidx =
 		OpenPGP.signatures_and_data message
 
 -- | Sign data or key/userID pair.
-sign :: OpenPGP.Message    -- ^ SecretKeys, one of which will be used
+sign :: (CryptoRandomGen g) =>
+        OpenPGP.Message    -- ^ SecretKeys, one of which will be used
         -> OpenPGP.Message -- ^ Message containing data or key to sign, and optional signature packet
         -> OpenPGP.HashAlgorithm -- ^ HashAlgorithm to use in signature
         -> String  -- ^ KeyID of key to choose or @[]@ for first
         -> Integer -- ^ Timestamp for signature (unless sig supplied)
+        -> g       -- ^ Random number generator
         -> OpenPGP.Packet
-sign keys message hsh keyid timestamp =
+sign keys message hsh keyid timestamp g =
 	-- WARNING: this style of update is unsafe on most fields
 	-- it is safe on signature and hash_head, though
 	sig {
-		OpenPGP.signature = [OpenPGP.MPI $ toNum final],
-		OpenPGP.hash_head = toNum $ BS.take 2 final
+		OpenPGP.signature = map OpenPGP.MPI final,
+		OpenPGP.hash_head = 0 -- TODO
 	}
 	where
-	Right final = RSA.sign bhash padding (privateRSAkey k) dta
+	final   = case OpenPGP.key_algorithm sig of
+		OpenPGP.DSA -> [dsaR, dsaS]
+		kalgo | kalgo `elem` [OpenPGP.RSA,OpenPGP.RSA_S] -> [toNum rsaFinal]
+		      | otherwise ->
+			error ("Unsupported key algorithm " ++ show kalgo ++ "in sign")
+	Right ((dsaR,dsaS),_) = let k' = privateDSAkey k in
+		DSA.sign g (dsaTruncate k' . bhash) k' dta
+	Right rsaFinal = RSA.sign bhash padding (privateRSAkey k) dta
+	dsaTruncate (DSA.PrivateKey (_,_,q) _) bs =
+		BS.take (integerBytesize q) bs
 	dta     = toStrictBS $ case signOver of {
 		OpenPGP.LiteralDataPacket {OpenPGP.content = c} -> c;
 		_ -> LZ.concat $ OpenPGP.fingerprint_material signOver ++ [
@@ -180,7 +196,7 @@ sign keys message hsh keyid timestamp =
 		(OpenPGP.version s)
 		(OpenPGP.signature_type s)
 		(
-			if kalgo `elem` [OpenPGP.DSA,OpenPGP.RSA,OpenPGP.RSA_E] then
+			if kalgo `elem` [OpenPGP.DSA,OpenPGP.RSA,OpenPGP.RSA_S] then
 				kalgo
 			else
 				undefined
