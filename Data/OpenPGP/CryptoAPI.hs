@@ -48,10 +48,10 @@ hash OpenPGP.SHA224 = hash_ (undefined :: SHA224)
 hash _ = error "Unsupported HashAlgorithm in hash"
 
 hash_ :: (Hash c d) => d -> LZ.ByteString -> (BS.ByteString, String)
-hash_ d bs = (hbs, map toUpper $ pad $ hexString $ BS.unpack $ hbs)
+hash_ d bs = (hbs, map toUpper $ pad $ hexString $ BS.unpack hbs)
 	where
 	hbs = Serialize.encode $ hashFunc d bs
-	pad s = (replicate (len - length s) '0') ++ s
+	pad s = replicate (len - length s) '0' ++ s
 	len = (outputLength `for` d) `div` 8
 
 hexString :: [Word8] -> String
@@ -85,7 +85,7 @@ fromJustMPI (Just (OpenPGP.MPI x)) = x
 fromJustMPI _ = error "Not a Just MPI, Data.OpenPGP.CryptoAPI"
 
 integerBytesize :: Integer -> Int
-integerBytesize i = (length $ LZ.unpack $ encode (OpenPGP.MPI i)) - 2
+integerBytesize i = length (LZ.unpack $ encode (OpenPGP.MPI i)) - 2
 
 keyParam :: Char -> OpenPGP.Packet -> Integer
 keyParam c k = fromJustMPI $ lookup c (OpenPGP.key k)
@@ -130,17 +130,16 @@ verify keys message sigidx =
 	where
 	dsaVerify = let k' = dsaKey k in
 		case DSA.verify dsaSig (dsaTruncate k' . bhash) k' signature_over of
-			Left x -> False
+			Left _ -> False
 			Right v -> v
 	rsaVerify =
-		case RSA.verify (bhash) padding (rsaKey k) signature_over rsaSig of
+		case RSA.verify bhash padding (rsaKey k) signature_over rsaSig of
 			Left _ -> False
 			Right v -> v
 	rsaSig = toStrictBS $ LZ.drop 2 $ encode (head $ OpenPGP.signature sig)
 	dsaSig = let [OpenPGP.MPI r, OpenPGP.MPI s] = OpenPGP.signature sig in
 		(r, s)
-	dsaTruncate (DSA.PublicKey (_,_,q) _) bs =
-		BS.take (integerBytesize q) bs
+	dsaTruncate (DSA.PublicKey (_,_,q) _) = BS.take (integerBytesize q)
 	bhash = fst . hash hash_algo . toLazyBS
 	padding = emsa_pkcs1_v1_5_hash_padding hash_algo
 	hash_algo = OpenPGP.hash_algorithm sig
@@ -175,8 +174,7 @@ sign keys message hsh keyid timestamp g =
 	Right ((dsaR,dsaS),_) = let k' = privateDSAkey k in
 		DSA.sign g (dsaTruncate k' . bhash) k' dta
 	Right rsaFinal = RSA.sign bhash padding (privateRSAkey k) dta
-	dsaTruncate (DSA.PrivateKey (_,_,q) _) bs =
-		BS.take (integerBytesize q) bs
+	dsaTruncate (DSA.PrivateKey (_,_,q) _) = BS.take (integerBytesize q)
 	dta     = toStrictBS $ case signOver of {
 		OpenPGP.LiteralDataPacket {OpenPGP.content = c} -> c;
 		_ -> LZ.concat $ OpenPGP.fingerprint_material signOver ++ [
@@ -188,7 +186,7 @@ sign keys message hsh keyid timestamp g =
 	sig     = findSigOrDefault (find OpenPGP.isSignaturePacket m)
 	padding = emsa_pkcs1_v1_5_hash_padding hsh
 	bhash   = fst . hash hsh . toLazyBS
-	toNum x = BS.foldl (\a b -> a `shiftL` 8 .|. fromIntegral b) 0 x
+	toNum   = BS.foldl (\a b -> a `shiftL` 8 .|. fromIntegral b) 0
 
 	-- Either a SignaturePacket was found, or we need to make one
 	findSigOrDefault (Just s) =
