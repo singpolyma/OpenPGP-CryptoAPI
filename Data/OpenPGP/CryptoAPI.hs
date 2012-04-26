@@ -91,9 +91,15 @@ keyParam c k = fromJustMPI $ lookup c (OpenPGP.key k)
 
 privateRSAkey :: OpenPGP.Packet -> RSA.PrivateKey
 privateRSAkey k =
-	RSA.PrivateKey (integerBytesize n) n d 0 0 0 0 0
+	-- Invert p and q because u is pinv not qinv
+	RSA.PrivateKey (integerBytesize n) n d q p
+		(d `mod` (q-1))
+		(d `mod` (p-1))
+		(keyParam 'u' k)
 	where
 	d = keyParam 'd' k
+	p = keyParam 'p' k
+	q = keyParam 'q' k
 	n = keyParam 'n' k
 
 rsaKey :: OpenPGP.Packet -> RSA.PublicKey
