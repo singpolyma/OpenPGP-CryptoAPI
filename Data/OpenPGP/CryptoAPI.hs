@@ -191,16 +191,11 @@ sign keys message hsh keyid timestamp g =
 	toNum x = BS.foldl (\a b -> a `shiftL` 8 .|. fromIntegral b) 0 x
 
 	-- Either a SignaturePacket was found, or we need to make one
-	findSigOrDefault (Just s) = let kalgo = OpenPGP.key_algorithm s in
+	findSigOrDefault (Just s) =
 		OpenPGP.signaturePacket
 		(OpenPGP.version s)
 		(OpenPGP.signature_type s)
-		(
-			if kalgo `elem` [OpenPGP.DSA,OpenPGP.RSA,OpenPGP.RSA_S] then
-				kalgo
-			else
-				undefined
-		)
+		(OpenPGP.key_algorithm k) -- force to algo of key
 		hsh -- force hash algorithm
 		(OpenPGP.hashed_subpackets s)
 		(OpenPGP.unhashed_subpackets s)
@@ -209,7 +204,7 @@ sign keys message hsh keyid timestamp g =
 	findSigOrDefault Nothing  = OpenPGP.signaturePacket
 		4
 		defaultStype
-		OpenPGP.RSA
+		(OpenPGP.key_algorithm k) -- force to algo of key
 		hsh
 		([
 			-- Do we really need to pass in timestamp just for the default?

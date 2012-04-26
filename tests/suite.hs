@@ -36,21 +36,9 @@ prop_sign_and_verify secring g halgo filename msg = do
 			OpenPGP.timestamp = 12341234,
 			OpenPGP.content = LZ.fromString msg
 		}
-	let initsig = OpenPGP.signaturePacket
-			4
-			0x01
-			kalgo
-			halgo
-			[
-				OpenPGP.SignatureCreationTimePacket 12341234,
-				OpenPGP.IssuerPacket keyid
-			]
-			[]
-			undefined
-			undefined
-	let sig = OpenPGP.sign secring (OpenPGP.Message [m,initsig])
+	let sig = OpenPGP.sign secring (OpenPGP.Message [m])
 			halgo keyid 12341234 g
-	return $ OpenPGP.verify secring (OpenPGP.Message [m,sig]) 0
+	return $ OpenPGP.verify secring (OpenPGP.Message [sig,m]) 0
 
 tests :: (CryptoRandomGen g) => OpenPGP.Message -> g -> [Test]
 tests secring rng =
