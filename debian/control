@@ -1,0 +1,103 @@
+Source: haskell-openpgp-crypto-api
+Priority: extra
+Section: haskell
+Maintainer: Stephen Paul Weber <singpolyma@singpolyma.net>
+Build-Depends: debhelper (>= 7.0),
+               haskell-devscripts (>= 0.8),
+               cdbs,
+               ghc,
+               ghc-prof,
+               libghc-binary-dev,
+               libghc-binary-prof,
+               libghc-cereal-dev,
+               libghc-cereal-prof,
+               libghc-crypto-api-dev,
+               libghc-crypto-api-prof,
+               libghc-cryptocipher-dev,
+               libghc-cryptocipher-prof,
+               libghc-cryptohash-dev,
+               libghc-cryptohash-prof,
+               libghc-openpgp-dev,
+               libghc-openpgp-prof,
+               libghc-utf8-string-dev,
+               libghc-utf8-string-prof
+Build-Depends-Indep: ghc-doc,
+                     libghc-binary-doc,
+                     libghc-cereal-doc,
+                     libghc-crypto-api-doc,
+                     libghc-cryptocipher-doc,
+                     libghc-cryptohash-doc,
+                     libghc-openpgp-doc,
+                     libghc-utf8-string-doc
+Standards-Version: 3.9.1
+Homepage: http://github.com/singpolyma/OpenPGP-CryptoAPI
+
+Package: libghc-openpgp-crypto-api-dev
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${haskell:Depends},
+         ${misc:Depends}
+Recommends: ${haskell:Recommends}
+Suggests: ${haskell:Suggests}
+Provides: ${haskell:Provides}
+Description: Implement cryptography for OpenPGP using crypto-api compatible libraries
+ This is a wrapper around <http://hackage.haskell.org/package/crypto-api>
+ and related libraries that currently does fingerprint generation, signature
+ generation, and signature verification (for RSA and DSA keys).
+ .
+ It is indended to be used with <http://hackage.haskell.org/openpgp>
+ .
+ It is intended that you use qualified imports with this library.
+ .
+ > import qualified Data.OpenPGP.CryptoAPI as OpenPGP
+ .
+  Author: Stephen Paul Weber <singpolyma@singpolyma.net>
+  Upstream-Maintainer: Stephen Paul Weber <singpolyma@singpolyma.net>
+ .
+ This package contains the normal library files.
+
+Package: libghc-openpgp-crypto-api-prof
+Architecture: any
+Depends: ${haskell:Depends},
+         ${misc:Depends}
+Recommends: ${haskell:Recommends}
+Suggests: ${haskell:Suggests}
+Provides: ${haskell:Provides}
+Description: Implement cryptography for OpenPGP using crypto-api compatible libraries
+ This is a wrapper around <http://hackage.haskell.org/package/crypto-api>
+ and related libraries that currently does fingerprint generation, signature
+ generation, and signature verification (for RSA and DSA keys).
+ .
+ It is indended to be used with <http://hackage.haskell.org/openpgp>
+ .
+ It is intended that you use qualified imports with this library.
+ .
+ > import qualified Data.OpenPGP.CryptoAPI as OpenPGP
+ .
+  Author: Stephen Paul Weber <singpolyma@singpolyma.net>
+  Upstream-Maintainer: Stephen Paul Weber <singpolyma@singpolyma.net>
+ .
+ This package contains the libraries compiled with profiling enabled.
+
+Package: libghc-openpgp-crypto-api-doc
+Architecture: all
+Section: doc
+Depends: ${haskell:Depends},
+         ${misc:Depends}
+Recommends: ${haskell:Recommends}
+Suggests: ${haskell:Suggests}
+Description: Implement cryptography for OpenPGP using crypto-api compatible libraries
+ This is a wrapper around <http://hackage.haskell.org/package/crypto-api>
+ and related libraries that currently does fingerprint generation, signature
+ generation, and signature verification (for RSA and DSA keys).
+ .
+ It is indended to be used with <http://hackage.haskell.org/openpgp>
+ .
+ It is intended that you use qualified imports with this library.
+ .
+ > import qualified Data.OpenPGP.CryptoAPI as OpenPGP
+ .
+  Author: Stephen Paul Weber <singpolyma@singpolyma.net>
+  Upstream-Maintainer: Stephen Paul Weber <singpolyma@singpolyma.net>
+ .
+ This package contains the documentation files.
