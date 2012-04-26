@@ -29,7 +29,7 @@ testVerifyMessage keyring message = do
 
 prop_sign_and_verify :: (CryptoRandomGen g) => OpenPGP.Message -> g -> OpenPGP.HashAlgorithm -> String -> String -> Gen Bool
 prop_sign_and_verify secring g halgo filename msg = do
-	(keyid,kalgo) <- elements [("FEF8AFA0F661C3EE",OpenPGP.RSA),("7F69FA376B020509",OpenPGP.DSA)]
+	keyid <- elements ["FEF8AFA0F661C3EE","7F69FA376B020509"]
 	let m = OpenPGP.LiteralDataPacket {
 			OpenPGP.format = 'u',
 			OpenPGP.filename = filename,

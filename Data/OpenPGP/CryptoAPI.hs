@@ -1,4 +1,4 @@
-module Data.OpenPGP.CryptoAPI where
+module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify) where
 
 import Numeric
 import Data.Word
@@ -6,7 +6,7 @@ import Data.Char
 import Data.Bits
 import Data.List (find)
 import Data.Binary
-import Crypto.Classes hiding (hash)
+import Crypto.Classes hiding (hash,sign,verify)
 import Crypto.Random
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
