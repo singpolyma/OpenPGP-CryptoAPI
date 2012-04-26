@@ -4,7 +4,7 @@ VERSION=0.3
 
 .PHONY: all clean doc install debian test
 
-all: test report.html doc dist/build/libHSopenpgp-crypto-api-$(VERSION).a dist/openpgp-crypto-api-$(VERSION).tar.gz
+all: sign verify keygen test report.html doc dist/build/libHSopenpgp-crypto-api-$(VERSION).a dist/openpgp-crypto-api-$(VERSION).tar.gz
 
 install: dist/build/libHSopenpgp-crypto-api-$(VERSION).a
 	cabal install
