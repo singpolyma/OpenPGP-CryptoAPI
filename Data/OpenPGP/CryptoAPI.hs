@@ -6,8 +6,8 @@ import Data.Char
 import Data.Bits
 import Data.List (find)
 import Data.Binary
-import Crypto.Classes hiding (hash,sign,verify)
-import Crypto.Random
+import Crypto.Classes hiding (hash,sign,verify,encode)
+import Crypto.Random (CryptoRandomGen)
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
 import Crypto.Hash.RIPEMD160 (RIPEMD160)
@@ -15,7 +15,7 @@ import Crypto.Hash.SHA256 (SHA256)
 import Crypto.Hash.SHA384 (SHA384)
 import Crypto.Hash.SHA512 (SHA512)
 import Crypto.Hash.SHA224 (SHA224)
-import qualified Data.Serialize as Serialize (encode)
+import qualified Crypto.Classes as Serialize (encode)
 import qualified Crypto.Cipher.RSA as RSA
 import qualified Crypto.Cipher.DSA as DSA
 import qualified Data.ByteString as BS
