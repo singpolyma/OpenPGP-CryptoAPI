@@ -37,9 +37,9 @@ main = do
 		OpenPGP.private_hash = undefined }
 
 	let userID = OpenPGP.UserIDPacket "Test <test@example.com>"
-	let message = OpenPGP.Message[ secretKey, userID ]
+	let message = OpenPGP.Message [secretKey, userID]
 
-	let message' = OpenPGP.Message [ secretKey, userID,
+	let message' = OpenPGP.Message [secretKey, userID,
 		OpenPGP.sign message message OpenPGP.SHA256 [] (fromIntegral t) g]
 
 	LZ.putStr $ encode message'
