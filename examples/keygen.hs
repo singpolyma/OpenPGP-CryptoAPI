@@ -34,7 +34,8 @@ main = do
 		OpenPGP.s2k_salt = undefined,
 		OpenPGP.s2k_count = undefined,
 		OpenPGP.encrypted_data = undefined,
-		OpenPGP.private_hash = undefined }
+		OpenPGP.private_hash = undefined,
+		OpenPGP.is_subkey = False}
 
 	let userID = OpenPGP.UserIDPacket "Test <test@example.com>"
 	let message = OpenPGP.Message [secretKey, userID]
