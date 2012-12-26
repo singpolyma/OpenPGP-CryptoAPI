@@ -5,8 +5,8 @@ import Data.Word
 import Data.Char
 import Data.Bits
 import Data.List (find)
-import Data.Binary
-import Crypto.Classes hiding (hash,sign,verify)
+import Data.Binary 
+import Crypto.Classes hiding (hash,sign,verify, encode)
 import Crypto.Random (CryptoRandomGen)
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
@@ -93,7 +93,7 @@ keyParam c k = fromJustMPI $ lookup c (OpenPGP.key k)
 privateRSAkey :: OpenPGP.Packet -> RSA.PrivateKey
 privateRSAkey k =
 	-- Invert p and q because u is pinv not qinv
-	RSA.PrivateKey (integerBytesize n) n d q p
+	RSA.PrivateKey pubkey d q p
 		(d `mod` (q-1))
 		(d `mod` (p-1))
 		(keyParam 'u' k)
@@ -102,7 +102,8 @@ privateRSAkey k =
 	p = keyParam 'p' k
 	q = keyParam 'q' k
 	n = keyParam 'n' k
-
+        pubkey = rsaKey k
+        
 rsaKey :: OpenPGP.Packet -> RSA.PublicKey
 rsaKey k =
 	RSA.PublicKey (integerBytesize n) n (keyParam 'e' k)
@@ -148,7 +149,7 @@ verify keys message sigidx =
 	sig = sigs !! sigidx
 	(sigs, (OpenPGP.LiteralDataPacket {OpenPGP.content = dta}):_) =
 		OpenPGP.signatures_and_data message
-
+           
 -- | Sign data or key/userID pair.
 sign :: (CryptoRandomGen g) =>
         OpenPGP.Message    -- ^ SecretKeys, one of which will be used
