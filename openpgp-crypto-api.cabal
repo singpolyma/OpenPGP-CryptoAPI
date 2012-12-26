@@ -66,6 +66,7 @@ test-suite tests
                 crypto-api >= 0.9,
                 cryptocipher >= 0.3.7,
                 cryptohash,
+                cereal,
                 HUnit,
                 QuickCheck >= 2.4.1.1,
                 test-framework,
