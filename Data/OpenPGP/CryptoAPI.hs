@@ -1,13 +1,15 @@
-module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify) where
+module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify, decrypt) where
 
-import Numeric
-import Data.Word
 import Data.Char
 import Data.Bits
 import Data.List (find)
+import Data.Maybe (mapMaybe, catMaybes, listToMaybe)
+import Control.Arrow
+import Control.Applicative
 import Data.Binary
 import Crypto.Classes hiding (hash,sign,verify,encode)
-import Crypto.Random (CryptoRandomGen)
+import Crypto.Modes
+import Crypto.Random (CryptoRandomGen, SystemRandom, genBytes)
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
 import Crypto.Hash.RIPEMD160 (RIPEMD160)
@@ -15,7 +17,9 @@ import Crypto.Hash.SHA256 (SHA256)
 import Crypto.Hash.SHA384 (SHA384)
 import Crypto.Hash.SHA512 (SHA512)
 import Crypto.Hash.SHA224 (SHA224)
-import qualified Crypto.Classes as Serialize (encode)
+import Crypto.Cipher.AES (AES128,AES192,AES256)
+import Crypto.Cipher.Blowfish (Blowfish)
+import qualified Data.Serialize as Serialize
 import qualified Crypto.Cipher.RSA as RSA
 import qualified Crypto.Cipher.DSA as DSA
 import qualified Data.ByteString as BS
@@ -23,16 +27,13 @@ import qualified Data.ByteString.Lazy as LZ
 import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString)
 
 import qualified Data.OpenPGP as OpenPGP
+import Data.OpenPGP.CryptoAPI.Util
 
--- | Generate a key fingerprint from a PublicKeyPacket or SecretKeyPacket
--- <http://tools.ietf.org/html/rfc4880#section-12.2>
-fingerprint :: OpenPGP.Packet -> String
-fingerprint p
-	| OpenPGP.version p == 4 = snd $ hash OpenPGP.SHA1 material
-	| OpenPGP.version p `elem` [2, 3] = snd $ hash OpenPGP.MD5 material
-	| otherwise = error "Unsupported Packet version or type in fingerprint"
-	where
-	material = LZ.concat $ OpenPGP.fingerprint_material p
+-- | An encryption routine
+type Encrypt g = (g -> LZ.ByteString -> (LZ.ByteString, g))
+
+-- | A decryption routine
+type Decrypt = (LZ.ByteString -> LZ.ByteString)
 
 find_key :: OpenPGP.Message -> String -> Maybe OpenPGP.Packet
 find_key = OpenPGP.find_key fingerprint
@@ -54,13 +55,6 @@ hash_ d bs = (hbs, map toUpper $ pad $ hexString $ BS.unpack hbs)
 	pad s = replicate (len - length s) '0' ++ s
 	len = (outputLength `for` d) `div` 8
 
-hexString :: [Word8] -> String
-hexString = foldr (pad `oo` showHex) ""
-	where
-	oo = (.) . (.)
-	pad s | odd $ length s = '0':s
-	      | otherwise = s
-
 -- http://tools.ietf.org/html/rfc3447#page-43
 -- http://tools.ietf.org/html/rfc4880#section-5.2.2
 emsa_pkcs1_v1_5_hash_padding :: OpenPGP.HashAlgorithm -> BS.ByteString
@@ -74,21 +68,44 @@ emsa_pkcs1_v1_5_hash_padding OpenPGP.SHA224 = BS.pack [0x30, 0x31, 0x30, 0x0d, 0
 emsa_pkcs1_v1_5_hash_padding _ =
 	error "Unsupported HashAlgorithm in emsa_pkcs1_v1_5_hash_padding."
 
-toStrictBS :: LZ.ByteString -> BS.ByteString
-toStrictBS = BS.concat . LZ.toChunks
+pgpCFBPrefix :: (BlockCipher k, CryptoRandomGen g) => k -> g -> (LZ.ByteString, g)
+pgpCFBPrefix k g =
+	(toLazyBS $ str `BS.append` BS.reverse (BS.take 2 $ BS.reverse str), g')
+	where
+	Right (str,g') = genBytes (blockSizeBytes `for` k) g
 
-toLazyBS :: BS.ByteString -> LZ.ByteString
-toLazyBS = LZ.fromChunks . (:[])
+pgpCFB :: (BlockCipher k, CryptoRandomGen g) => k -> (Encrypt g, Decrypt)
+pgpCFB k = (
+		(\g bs -> let (p,g') = pgpCFBPrefix k g in
+			(fst $ cfb k zeroIV (bs `LZ.append` p), g)),
+		LZ.drop prefixLen . fst . unCfb k zeroIV
+	)
+	where
+	prefixLen = 2 + fromIntegral (blockSizeBytes `for` k)
 
-fromJustMPI :: Maybe OpenPGP.MPI -> Integer
-fromJustMPI (Just (OpenPGP.MPI x)) = x
-fromJustMPI _ = error "Not a Just MPI, Data.OpenPGP.CryptoAPI"
+-- Drops 2 because the value is an MPI
+rsaDecrypt :: RSA.PrivateKey -> BS.ByteString -> Maybe BS.ByteString
+rsaDecrypt pk = hush . RSA.decrypt pk . BS.drop 2
 
 integerBytesize :: Integer -> Int
 integerBytesize i = length (LZ.unpack $ encode (OpenPGP.MPI i)) - 2
 
 keyParam :: Char -> OpenPGP.Packet -> Integer
 keyParam c k = fromJustMPI $ lookup c (OpenPGP.key k)
+
+keyAlgorithmIs :: OpenPGP.KeyAlgorithm -> OpenPGP.Packet -> Bool
+keyAlgorithmIs algo p = OpenPGP.key_algorithm p == algo
+
+secretKeys :: OpenPGP.Message -> ([(String, RSA.PrivateKey)], [(String, DSA.PrivateKey)])
+secretKeys (OpenPGP.Message keys) =
+	(
+		map (fingerprint &&& privateRSAkey) rsa,
+		map (fingerprint &&& privateDSAkey) dsa
+	)
+	where
+	dsa = secrets OpenPGP.DSA
+	rsa = secrets OpenPGP.RSA
+	secrets algo = filter (allOf [isSecretKey, keyAlgorithmIs algo]) keys
 
 privateRSAkey :: OpenPGP.Packet -> RSA.PrivateKey
 privateRSAkey k =
@@ -116,6 +133,16 @@ privateDSAkey k = DSA.PrivateKey
 dsaKey :: OpenPGP.Packet -> DSA.PublicKey
 dsaKey k = DSA.PublicKey
 	(keyParam 'p' k, keyParam 'g' k, keyParam 'q' k) (keyParam 'y' k)
+
+-- | Generate a key fingerprint from a PublicKeyPacket or SecretKeyPacket
+-- <http://tools.ietf.org/html/rfc4880#section-12.2>
+fingerprint :: OpenPGP.Packet -> String
+fingerprint p
+	| OpenPGP.version p == 4 = snd $ hash OpenPGP.SHA1 material
+	| OpenPGP.version p `elem` [2, 3] = snd $ hash OpenPGP.MD5 material
+	| otherwise = error "Unsupported Packet version or type in fingerprint"
+	where
+	material = LZ.concat $ OpenPGP.fingerprint_material p
 
 -- | Verify a message signature
 verify :: OpenPGP.Message    -- ^ Keys that may have made the signature
@@ -229,10 +256,67 @@ sign keys message hsh keyid timestamp g =
 	Just signOver = find isSignable m
 	OpenPGP.Message m = message
 
-	isSignable (OpenPGP.LiteralDataPacket {}) = True
-	isSignable (OpenPGP.PublicKeyPacket {})   = True
-	isSignable (OpenPGP.SecretKeyPacket {})   = True
-	isSignable _                              = False
+-- | Decrypt an OpenPGP message
+--
+-- TODO: verify MDC if present
+decrypt ::
+	OpenPGP.Message    -- ^ SecretKeys, one of which will be used
+	-> OpenPGP.Message -- ^ An OpenPGP Message containing AssymetricSessionKey and EncryptedData
+	-> Maybe OpenPGP.Message
+decrypt keys msg@(OpenPGP.Message pkts) = do
+	(_, d) <- getAsymmetricSessionKey keys msg
+	pkt <- find isEncryptedData pkts
+	return (decryptPacket d pkt)
 
-	isUserID (OpenPGP.UserIDPacket {})        = True
-	isUserID _                                = False
+-- | Decrypt a single packet, given the decryptor
+decryptPacket :: Decrypt -> OpenPGP.Packet -> OpenPGP.Message
+decryptPacket d (OpenPGP.EncryptedDataPacket {
+		OpenPGP.encrypted_data = encd
+	}) = decode (d encd)
+decryptPacket _ _ = error "Can only decrypt EncryptedDataPacket in Data.OpenPGP.CryptoAPI.decryptPacket"
+
+-- | Decrypt a symmetric session key
+getAsymmetricSessionKey ::
+	OpenPGP.Message    -- ^ SecretKeys, one of which will be used
+	-> OpenPGP.Message -- ^ An OpenPGP Message containing AssymetricSessionKey
+	-> Maybe (OpenPGP.SymmetricAlgorithm, Decrypt)
+getAsymmetricSessionKey keys (OpenPGP.Message ps) =
+	listToMaybe $ mapMaybe decodeSessionKey $ catMaybes $
+	concatMap (\(sk,ks) ->
+		map ($ toStrictBS $ OpenPGP.encrypted_data sk) ks
+	) toTry
+	where
+	toTry = map (id &&& lookupKey) sessionKeys
+
+	lookupKey (OpenPGP.AsymmetricSessionKeyPacket {
+		OpenPGP.key_algorithm = OpenPGP.RSA,
+		OpenPGP.key_id = key_id
+	}) | all (=='0') key_id = map (rsaDecrypt . snd) rsa
+	   | otherwise = map (rsaDecrypt . snd) $
+		filter (keyIdMatch key_id . fst) rsa
+	lookupKey _ = []
+
+	sessionKeys = filter isAsymmetricSessionKey ps
+	(rsa, _) = secretKeys keys
+
+decodeSessionKey :: BS.ByteString -> Maybe (OpenPGP.SymmetricAlgorithm, Decrypt)
+decodeSessionKey sk
+	| rechk == (decode (toLazyBS chk) :: Word16) = do
+		algo <- maybeDecode (toLazyBS algoByte)
+		-- Need to say what sort of CryptoRandomGen to use,
+		-- even though we then throw it away :P
+		(_, decrypt) <- decodeSymKey algo key :: Maybe (Encrypt SystemRandom, Decrypt)
+		return (algo, decrypt)
+	| otherwise = Nothing
+	where
+	rechk = fromIntegral $
+		BS.foldl' (\x y -> x + fromIntegral y) (0::Integer) key `mod` 65536
+	(key, chk) = BS.splitAt (BS.length rest - 2) rest
+	(algoByte, rest) = BS.splitAt 1 sk
+
+decodeSymKey :: (CryptoRandomGen g) => OpenPGP.SymmetricAlgorithm -> BS.ByteString -> Maybe (Encrypt g, Decrypt)
+decodeSymKey OpenPGP.AES128 k = pgpCFB <$> (`asTypeOf` (undefined :: AES128)) <$> sDecode k
+decodeSymKey OpenPGP.AES192 k = pgpCFB <$> (`asTypeOf` (undefined :: AES192)) <$> sDecode k
+decodeSymKey OpenPGP.AES256 k = pgpCFB <$> (`asTypeOf` (undefined :: AES256)) <$> sDecode k
+decodeSymKey OpenPGP.Blowfish k = pgpCFB <$> (`asTypeOf` (undefined :: Blowfish)) <$> sDecode k
+decodeSymKey _ _ = Nothing

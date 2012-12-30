@@ -31,12 +31,14 @@ extra-source-files:
         tests/data/000016-006.public_key,
         tests/data/000027-006.public_key,
         tests/data/000035-006.public_key,
-        tests/data/uncompressed-ops-dsa.gpg
-        tests/data/uncompressed-ops-dsa-sha384.txt.gpg
-        tests/data/uncompressed-ops-rsa.gpg
-        tests/data/compressedsig.gpg
-        tests/data/compressedsig-zlib.gpg
-        tests/data/compressedsig-bzip2.gpg
+        tests/data/uncompressed-ops-dsa.gpg,
+        tests/data/uncompressed-ops-dsa-sha384.txt.gpg,
+        tests/data/uncompressed-ops-rsa.gpg,
+        tests/data/compressedsig.gpg,
+        tests/data/compressedsig-zlib.gpg,
+        tests/data/compressedsig-bzip2.gpg,
+        tests/data/hello.gpg
+        tests/data/helloKey.gpg
 
 library
         exposed-modules:
@@ -46,7 +48,7 @@ library
                 base == 4.*,
                 bytestring,
                 utf8-string,
-                binary,
+                binary >= 0.6.4.0,
                 openpgp,
                 crypto-api,
                 cryptocipher >= 0.3.7,
@@ -61,11 +63,12 @@ test-suite tests
                 base == 4.*,
                 bytestring,
                 utf8-string,
-                binary,
+                binary >= 0.6.4.0,
                 openpgp,
                 crypto-api >= 0.9,
                 cryptocipher >= 0.3.7,
                 cryptohash,
+                cereal,
                 HUnit,
                 QuickCheck >= 2.4.1.1,
                 test-framework,

@@ -4,12 +4,13 @@ import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 import Test.HUnit hiding (Test)
 
+import Data.List (find)
 import Crypto.Random
 import Data.Binary
 import qualified Data.OpenPGP as OpenPGP
 import qualified Data.OpenPGP.CryptoAPI as OpenPGP
 import qualified Data.ByteString.Lazy as LZ
-import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString)
+import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString, toString)
 
 instance Arbitrary OpenPGP.HashAlgorithm where
 	arbitrary = elements [OpenPGP.MD5, OpenPGP.SHA1, OpenPGP.RIPEMD160, OpenPGP.SHA256, OpenPGP.SHA384, OpenPGP.SHA512, OpenPGP.SHA224]
@@ -26,6 +27,19 @@ testVerifyMessage keyring message = do
 	m <- fmap decode $ LZ.readFile $ "tests/data/" ++ message
 	let verification = OpenPGP.verify keys m 0
 	assertEqual (keyring ++ " for " ++ message) True verification
+
+testDecryptHello :: Assertion
+testDecryptHello = do
+	keys <- fmap decode $ LZ.readFile $ "tests/data/helloKey.gpg"
+	m <- fmap decode $ LZ.readFile $ "tests/data/hello.gpg"
+	let Just (OpenPGP.Message [OpenPGP.CompressedDataPacket {
+			OpenPGP.message = OpenPGP.Message msg
+		}]) = OpenPGP.decrypt keys m
+	let content = fmap (LZ.toString . OpenPGP.content) (find isLiteral msg)
+	assertEqual "Decrypt hello" (Just "hello\n") content
+	where
+	isLiteral (OpenPGP.LiteralDataPacket {}) = True
+	isLiteral                              _ = False
 
 prop_sign_and_verify :: (CryptoRandomGen g) => OpenPGP.Message -> g -> OpenPGP.HashAlgorithm -> String -> String -> Gen Bool
 prop_sign_and_verify secring g halgo filename msg = do
@@ -59,6 +73,9 @@ tests secring rng =
 		],
 		testGroup "Signing" [
 			testProperty "Crypto signatures verify" (prop_sign_and_verify secring rng)
+		],
+		testGroup "Decryption" [
+			testCase "decrypt hello" testDecryptHello
 		]
 	]
 
