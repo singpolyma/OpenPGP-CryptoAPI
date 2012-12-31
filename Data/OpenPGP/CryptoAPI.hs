@@ -9,7 +9,7 @@ import Control.Applicative
 import Data.Binary
 import Crypto.Classes hiding (hash,sign,verify,encode)
 import Crypto.Modes
-import Crypto.Random (CryptoRandomGen, SystemRandom, genBytes)
+import Crypto.Random (CryptoRandomGen, genBytes)
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
 import Crypto.Hash.RIPEMD160 (RIPEMD160)
@@ -33,7 +33,7 @@ import Data.OpenPGP.CryptoAPI.Util
 type Encrypt g = (g -> LZ.ByteString -> (LZ.ByteString, g))
 
 -- | A decryption routine
-type Decrypt = (LZ.ByteString -> LZ.ByteString)
+type Decrypt = (LZ.ByteString -> (LZ.ByteString, LZ.ByteString))
 
 find_key :: OpenPGP.Message -> String -> Maybe OpenPGP.Packet
 find_key = OpenPGP.find_key fingerprint
@@ -68,20 +68,27 @@ emsa_pkcs1_v1_5_hash_padding OpenPGP.SHA224 = BS.pack [0x30, 0x31, 0x30, 0x0d, 0
 emsa_pkcs1_v1_5_hash_padding _ =
 	error "Unsupported HashAlgorithm in emsa_pkcs1_v1_5_hash_padding."
 
+{-
 pgpCFBPrefix :: (BlockCipher k, CryptoRandomGen g) => k -> g -> (LZ.ByteString, g)
 pgpCFBPrefix k g =
 	(toLazyBS $ str `BS.append` BS.reverse (BS.take 2 $ BS.reverse str), g')
 	where
 	Right (str,g') = genBytes (blockSizeBytes `for` k) g
 
-pgpCFB :: (BlockCipher k, CryptoRandomGen g) => k -> (Encrypt g, Decrypt)
-pgpCFB k = (
-		(\g bs -> let (p,g') = pgpCFBPrefix k g in
-			(fst $ cfb k zeroIV (bs `LZ.append` p), g)),
-		LZ.drop prefixLen . fst . unCfb k zeroIV
-	)
+pgpCFB :: (BlockCipher k, CryptoRandomGen g) => k -> Encrypt g
+pgpCFB k g bs = (fst $ cfb k zeroIV (bs `LZ.append` p), g)
 	where
-	prefixLen = 2 + fromIntegral (blockSizeBytes `for` k)
+	(p,g') = pgpCFBPrefix k g
+-}
+
+pgpUnCFB :: (BlockCipher k) => k -> Decrypt
+pgpUnCFB k s =
+	second dropPadEnd . LZ.splitAt (1 + block) . fst . unCfb k zeroIV $ padded
+	where
+	dropPadEnd s = LZ.take (LZ.length s - padAmount) s
+	padded = s `LZ.append` LZ.replicate padAmount 0
+	padAmount = block - (LZ.length s `mod` block)
+	block = fromIntegral $ blockSizeBytes `for` k
 
 -- Drops 2 because the value is an MPI
 rsaDecrypt :: RSA.PrivateKey -> BS.ByteString -> Maybe BS.ByteString
@@ -266,13 +273,24 @@ decrypt ::
 decrypt keys msg@(OpenPGP.Message pkts) = do
 	(_, d) <- getAsymmetricSessionKey keys msg
 	pkt <- find isEncryptedData pkts
-	return (decryptPacket d pkt)
+	decryptPacket d pkt
 
 -- | Decrypt a single packet, given the decryptor
-decryptPacket :: Decrypt -> OpenPGP.Packet -> OpenPGP.Message
+decryptPacket :: Decrypt -> OpenPGP.Packet -> Maybe OpenPGP.Message
 decryptPacket d (OpenPGP.EncryptedDataPacket {
+		OpenPGP.version = 1,
 		OpenPGP.encrypted_data = encd
-	}) = decode (d encd)
+	}) | rechk == decode mdc = decode msg
+	   | otherwise = Nothing
+	where
+	rechk = OpenPGP.ModificationDetectionCodePacket $ toLazyBS $ fst $
+		hash OpenPGP.SHA1 $
+		prefix `LZ.append` msg `LZ.append` LZ.pack [0xD3, 0x14]
+	(msg,mdc) = LZ.splitAt (LZ.length content - 22) content
+	(prefix, content) = d encd
+decryptPacket _ (OpenPGP.EncryptedDataPacket {
+		OpenPGP.version = 0
+	}) = error "TODO: old-style encryption with no MDC in Data.OpenPGP.CryptoAPI.decryptPacket"
 decryptPacket _ _ = error "Can only decrypt EncryptedDataPacket in Data.OpenPGP.CryptoAPI.decryptPacket"
 
 -- | Decrypt a symmetric session key
@@ -303,9 +321,7 @@ decodeSessionKey :: BS.ByteString -> Maybe (OpenPGP.SymmetricAlgorithm, Decrypt)
 decodeSessionKey sk
 	| rechk == (decode (toLazyBS chk) :: Word16) = do
 		algo <- maybeDecode (toLazyBS algoByte)
-		-- Need to say what sort of CryptoRandomGen to use,
-		-- even though we then throw it away :P
-		(_, decrypt) <- decodeSymKey algo key :: Maybe (Encrypt SystemRandom, Decrypt)
+		decrypt <- decodeSymKey algo key
 		return (algo, decrypt)
 	| otherwise = Nothing
 	where
@@ -314,9 +330,9 @@ decodeSessionKey sk
 	(key, chk) = BS.splitAt (BS.length rest - 2) rest
 	(algoByte, rest) = BS.splitAt 1 sk
 
-decodeSymKey :: (CryptoRandomGen g) => OpenPGP.SymmetricAlgorithm -> BS.ByteString -> Maybe (Encrypt g, Decrypt)
-decodeSymKey OpenPGP.AES128 k = pgpCFB <$> (`asTypeOf` (undefined :: AES128)) <$> sDecode k
-decodeSymKey OpenPGP.AES192 k = pgpCFB <$> (`asTypeOf` (undefined :: AES192)) <$> sDecode k
-decodeSymKey OpenPGP.AES256 k = pgpCFB <$> (`asTypeOf` (undefined :: AES256)) <$> sDecode k
-decodeSymKey OpenPGP.Blowfish k = pgpCFB <$> (`asTypeOf` (undefined :: Blowfish)) <$> sDecode k
+decodeSymKey :: OpenPGP.SymmetricAlgorithm -> BS.ByteString -> Maybe Decrypt
+decodeSymKey OpenPGP.AES128 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES128)) <$> sDecode k
+decodeSymKey OpenPGP.AES192 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES192)) <$> sDecode k
+decodeSymKey OpenPGP.AES256 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES256)) <$> sDecode k
+decodeSymKey OpenPGP.Blowfish k = pgpUnCFB <$> (`asTypeOf` (undefined :: Blowfish)) <$> sDecode k
 decodeSymKey _ _ = Nothing
