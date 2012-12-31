@@ -1,4 +1,4 @@
-module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify, decrypt) where
+module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify, encrypt, decrypt) where
 
 import Data.Char
 import Data.Bits
@@ -38,6 +38,7 @@ type Encrypt g = (LZ.ByteString -> g -> (LZ.ByteString, g))
 -- | A decryption routine
 type Decrypt = (LZ.ByteString -> (LZ.ByteString, LZ.ByteString))
 
+-- Start differently-formatted section
 -- | This should be in Crypto.Classes and is based on buildKeyIO
 buildKeyGen :: (BlockCipher k, CryptoRandomGen g) => g -> Either GenError (k, g)
 buildKeyGen = runStateT (go (0::Int))
@@ -53,6 +54,7 @@ buildKeyGen = runStateT (go (0::Int))
 	case buildKey kd of
 		Nothing -> go (i+1)
 		Just k  -> return $ k `asTaggedTypeOf` bs
+-- End differently-formatted section
 
 find_key :: OpenPGP.Message -> String -> Maybe OpenPGP.Packet
 find_key = OpenPGP.find_key fingerprint
@@ -115,6 +117,14 @@ padThenUnpad k f s = dropPadEnd (f padded)
 -- Drops 2 because the value is an MPI
 rsaDecrypt :: RSA.PrivateKey -> BS.ByteString -> Maybe BS.ByteString
 rsaDecrypt pk = hush . RSA.decrypt pk . BS.drop 2
+
+rsaEncrypt :: (CryptoRandomGen g) => RSA.PublicKey -> BS.ByteString -> StateT g (Either GenError) BS.ByteString
+rsaEncrypt pk bs = StateT (\g ->
+		case RSA.encrypt g pk bs of
+			(Left (RSA.RandomGenFailure e)) -> Left e
+			(Left e) -> Left (GenErrorOther $ show e)
+			(Right v) -> Right v
+	)
 
 integerBytesize :: Integer -> Int
 integerBytesize i = length (LZ.unpack $ encode (OpenPGP.MPI i)) - 2
@@ -285,9 +295,68 @@ sign keys message hsh keyid timestamp g =
 	Just signOver = find isSignable m
 	OpenPGP.Message m = message
 
+encrypt :: (CryptoRandomGen g) =>
+	OpenPGP.Message               -- ^ PublicKeys, all of which will be used
+	-> OpenPGP.SymmetricAlgorithm -- ^ Cipher to use
+	-> OpenPGP.Message            -- ^ The Message to encrypt
+	-> g                          -- ^ Random number generator
+	-> Either GenError (OpenPGP.Message, g)
+encrypt (OpenPGP.Message keys) algo msg = runStateT $ do
+	(sk, encP) <- sessionFor algo msg
+	OpenPGP.Message . (++[encP]) <$>
+		mapM (encryptSessionKey sk) (filter isKey keys)
+
+encryptSessionKey :: (CryptoRandomGen g) => LZ.ByteString -> OpenPGP.Packet -> StateT g (Either GenError) OpenPGP.Packet
+encryptSessionKey sk pk = OpenPGP.AsymmetricSessionKeyPacket 3
+	(fingerprint pk)
+	(OpenPGP.key_algorithm pk)
+	. addBitLen <$> encd (OpenPGP.key_algorithm pk)
+	where
+	addBitLen bytes = encode (bitLen bytes :: Word16) `LZ.append` bytes
+	bitLen bytes = (fromIntegral (LZ.length bytes) - 1) * 8 + sigBit bytes
+	sigBit bytes = fst $ until ((==0) . snd)
+		(first (+1) . second (`shiftR` 1)) (0,LZ.index bytes 0)
+
+	encd OpenPGP.RSA = toLazyBS <$> rsaEncrypt (rsaKey pk) (toStrictBS sk)
+	encd _ = lift $ Left $ GenErrorOther $ "Unsupported PublicKey: " ++ show pk
+
+sessionFor :: (CryptoRandomGen g) => OpenPGP.SymmetricAlgorithm -> OpenPGP.Message -> StateT g (Either GenError) (LZ.ByteString, OpenPGP.Packet)
+sessionFor algo@OpenPGP.AES128 msg = do
+	sk <- StateT buildKeyGen
+	encP <- newSession (sk :: AES128) msg
+	return (sessionKeyEncode sk algo, encP)
+sessionFor algo@OpenPGP.AES192 msg = do
+	sk <- StateT buildKeyGen
+	encP <- newSession (sk :: AES192) msg
+	return (sessionKeyEncode sk algo, encP)
+sessionFor algo@OpenPGP.AES256 msg = do
+	sk <- StateT buildKeyGen
+	encP <- newSession (sk :: AES256) msg
+	return (sessionKeyEncode sk algo, encP)
+sessionFor algo@OpenPGP.Blowfish msg = do
+	sk <- StateT buildKeyGen
+	encP <- newSession (sk :: Blowfish) msg
+	return (sessionKeyEncode sk algo, encP)
+sessionFor algo _ = lift $ Left $ GenErrorOther $ "Unsupported cipher: " ++ show algo
+
+sessionKeyEncode :: (BlockCipher k) => k -> OpenPGP.SymmetricAlgorithm -> LZ.ByteString
+sessionKeyEncode sk algo =
+	LZ.concat [encode algo, toLazyBS bs, encode $ sessionKeyChk bs]
+	where
+	bs = Serialize.encode sk
+
+newSession :: (BlockCipher k, CryptoRandomGen g, Monad m) => k -> OpenPGP.Message -> StateT g m OpenPGP.Packet
+newSession sk msg = do
+	encd <- StateT $ return . pgpCFB sk (encode `oo` mkMDC) (encode msg)
+	return $ OpenPGP.EncryptedDataPacket 1 encd
+
 mkMDC :: LZ.ByteString -> LZ.ByteString -> OpenPGP.Packet
 mkMDC prefix msg = OpenPGP.ModificationDetectionCodePacket $ toLazyBS $ fst $
 	hash OpenPGP.SHA1 $ LZ.concat [prefix, msg, LZ.pack [0xD3, 0x14]]
+
+sessionKeyChk :: BS.ByteString -> Word16
+sessionKeyChk key = fromIntegral $
+	BS.foldl' (\x y -> x + fromIntegral y) (0::Integer) key `mod` 65536
 
 -- | Decrypt an OpenPGP message
 --
@@ -342,14 +411,12 @@ getAsymmetricSessionKey keys (OpenPGP.Message ps) =
 
 decodeSessionKey :: BS.ByteString -> Maybe (OpenPGP.SymmetricAlgorithm, Decrypt)
 decodeSessionKey sk
-	| rechk == (decode (toLazyBS chk) :: Word16) = do
+	| sessionKeyChk key == (decode (toLazyBS chk) :: Word16) = do
 		algo <- maybeDecode (toLazyBS algoByte)
 		decrypt <- decodeSymKey algo key
 		return (algo, decrypt)
 	| otherwise = Nothing
 	where
-	rechk = fromIntegral $
-		BS.foldl' (\x y -> x + fromIntegral y) (0::Integer) key `mod` 65536
 	(key, chk) = BS.splitAt (BS.length rest - 2) rest
 	(algoByte, rest) = BS.splitAt 1 sk
 

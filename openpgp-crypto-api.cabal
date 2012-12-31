@@ -49,11 +49,13 @@ library
 
         build-depends:
                 base == 4.*,
+                transformers,
                 bytestring,
                 utf8-string,
                 binary >= 0.6.4.0,
                 openpgp,
-                crypto-api,
+                crypto-api >= 0.9,
+                tagged,
                 cryptocipher >= 0.3.7,
                 cryptohash,
                 cereal
@@ -64,11 +66,13 @@ test-suite tests
 
         build-depends:
                 base == 4.*,
+                transformers,
                 bytestring,
                 utf8-string,
                 binary >= 0.6.4.0,
                 openpgp,
                 crypto-api >= 0.9,
+                tagged,
                 cryptocipher >= 0.3.7,
                 cryptohash,
                 cereal,

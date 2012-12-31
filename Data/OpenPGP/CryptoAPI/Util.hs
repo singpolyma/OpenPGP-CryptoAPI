@@ -66,3 +66,8 @@ isSignable (OpenPGP.LiteralDataPacket {}) = True
 isSignable (OpenPGP.PublicKeyPacket {})   = True
 isSignable (OpenPGP.SecretKeyPacket {})   = True
 isSignable _                              = False
+
+isKey :: OpenPGP.Packet -> Bool
+isKey (OpenPGP.SecretKeyPacket {}) = True
+isKey (OpenPGP.PublicKeyPacket {}) = True
+isKey                            _ = False

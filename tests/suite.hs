@@ -15,6 +15,9 @@ import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString, toString)
 instance Arbitrary OpenPGP.HashAlgorithm where
 	arbitrary = elements [OpenPGP.MD5, OpenPGP.SHA1, OpenPGP.RIPEMD160, OpenPGP.SHA256, OpenPGP.SHA384, OpenPGP.SHA512, OpenPGP.SHA224]
 
+instance Arbitrary OpenPGP.SymmetricAlgorithm where
+	arbitrary = elements [OpenPGP.AES128, OpenPGP.AES192, OpenPGP.AES256, OpenPGP.Blowfish]
+
 testFingerprint :: FilePath -> String -> Assertion
 testFingerprint fp kf = do
 	bs <- LZ.readFile $ "tests/data/" ++ fp
@@ -54,8 +57,21 @@ prop_sign_and_verify secring g halgo filename msg = do
 			halgo keyid 12341234 g
 	return $ OpenPGP.verify secring (OpenPGP.Message [sig,m]) 0
 
-tests :: (CryptoRandomGen g) => OpenPGP.Message -> g -> [Test]
-tests secring rng =
+prop_encrypt_and_decrypt :: (CryptoRandomGen g) => OpenPGP.Message -> g -> OpenPGP.SymmetricAlgorithm -> String -> String -> Bool
+prop_encrypt_and_decrypt secring g algo filename msg =
+	case OpenPGP.encrypt secring algo m g of
+		Left _ -> False
+		Right (encM, _) -> OpenPGP.decrypt secring encM == Just m
+	where
+	m = OpenPGP.Message [OpenPGP.LiteralDataPacket {
+			OpenPGP.format = 'u',
+			OpenPGP.filename = filename,
+			OpenPGP.timestamp = 12341234,
+			OpenPGP.content = LZ.fromString msg
+		}]
+
+tests :: (CryptoRandomGen g) => OpenPGP.Message -> OpenPGP.Message -> g -> [Test]
+tests secring oneKey rng =
 	[
 		testGroup "Fingerprint" [
 			testCase "000001-006.public_key" (testFingerprint "000001-006.public_key" "421F28FEAAD222F856C8FFD5D4D54EA16F87040E"),
@@ -76,6 +92,9 @@ tests secring rng =
 		],
 		testGroup "Decryption" [
 			testCase "decrypt hello" testDecryptHello
+		],
+		testGroup "Encryption" [
+			testProperty "Encrypted messages decrypt" (prop_encrypt_and_decrypt oneKey rng)
 		]
 	]
 
@@ -83,4 +102,5 @@ main :: IO ()
 main = do
 	rng <- newGenIO :: IO SystemRandom
 	secring <- fmap decode $ LZ.readFile "tests/data/secring.gpg"
-	defaultMain (tests secring rng)
+	oneKey <- fmap decode $ LZ.readFile "tests/data/helloKey.gpg"
+	defaultMain (tests secring oneKey rng)
