@@ -22,10 +22,12 @@ toStrictBS = BS.concat . LZ.toChunks
 toLazyBS :: BS.ByteString -> LZ.ByteString
 toLazyBS = LZ.fromChunks . (:[])
 
+oo :: (b -> c) -> (a -> a1 -> b) -> a -> a1 -> c
+oo = (.) . (.)
+
 hexString :: [Word8] -> String
 hexString = foldr (pad `oo` showHex) ""
 	where
-	oo = (.) . (.)
 	pad s | odd $ length s = '0':s
 	      | otherwise = s
 

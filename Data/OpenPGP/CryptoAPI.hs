@@ -6,10 +6,13 @@ import Data.List (find)
 import Data.Maybe (mapMaybe, catMaybes, listToMaybe)
 import Control.Arrow
 import Control.Applicative
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.State (StateT(..), runStateT)
 import Data.Binary
 import Crypto.Classes hiding (hash,sign,verify,encode)
+import Data.Tagged (untag, asTaggedTypeOf)
 import Crypto.Modes
-import Crypto.Random (CryptoRandomGen, genBytes)
+import Crypto.Random (CryptoRandomGen, GenError(GenErrorOther), genBytes)
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
 import Crypto.Hash.RIPEMD160 (RIPEMD160)
@@ -30,10 +33,26 @@ import qualified Data.OpenPGP as OpenPGP
 import Data.OpenPGP.CryptoAPI.Util
 
 -- | An encryption routine
-type Encrypt g = (g -> LZ.ByteString -> (LZ.ByteString, g))
+type Encrypt g = (LZ.ByteString -> g -> (LZ.ByteString, g))
 
 -- | A decryption routine
 type Decrypt = (LZ.ByteString -> (LZ.ByteString, LZ.ByteString))
+
+-- | This should be in Crypto.Classes and is based on buildKeyIO
+buildKeyGen :: (BlockCipher k, CryptoRandomGen g) => g -> Either GenError (k, g)
+buildKeyGen = runStateT (go (0::Int))
+  where
+  go 1000 = lift $ Left $ GenErrorOther
+                  "Tried 1000 times to generate a key from the system entropy.\
+                  \  No keys were returned! Perhaps the system entropy is broken\
+                  \ or perhaps the BlockCipher instance being used has a non-flat\
+                  \ keyspace."
+  go i = do
+	let bs = keyLength
+	kd <- StateT $ genBytes ((7 + untag bs) `div` 8)
+	case buildKey kd of
+		Nothing -> go (i+1)
+		Just k  -> return $ k `asTaggedTypeOf` bs
 
 find_key :: OpenPGP.Message -> String -> Maybe OpenPGP.Packet
 find_key = OpenPGP.find_key fingerprint
@@ -68,22 +87,25 @@ emsa_pkcs1_v1_5_hash_padding OpenPGP.SHA224 = BS.pack [0x30, 0x31, 0x30, 0x0d, 0
 emsa_pkcs1_v1_5_hash_padding _ =
 	error "Unsupported HashAlgorithm in emsa_pkcs1_v1_5_hash_padding."
 
-{-
 pgpCFBPrefix :: (BlockCipher k, CryptoRandomGen g) => k -> g -> (LZ.ByteString, g)
 pgpCFBPrefix k g =
 	(toLazyBS $ str `BS.append` BS.reverse (BS.take 2 $ BS.reverse str), g')
 	where
 	Right (str,g') = genBytes (blockSizeBytes `for` k) g
 
-pgpCFB :: (BlockCipher k, CryptoRandomGen g) => k -> Encrypt g
-pgpCFB k g bs = (fst $ cfb k zeroIV (bs `LZ.append` p), g)
+pgpCFB :: (BlockCipher k, CryptoRandomGen g) => k -> (LZ.ByteString -> LZ.ByteString -> LZ.ByteString) -> Encrypt g
+pgpCFB k sufGen bs g =
+	(padThenUnpad k (fst . cfb k zeroIV) (LZ.concat [p, bs, sufGen p bs]), g')
 	where
 	(p,g') = pgpCFBPrefix k g
--}
 
 pgpUnCFB :: (BlockCipher k) => k -> Decrypt
-pgpUnCFB k s =
-	second dropPadEnd . LZ.splitAt (1 + block) . fst . unCfb k zeroIV $ padded
+pgpUnCFB k = LZ.splitAt (2 + block) . padThenUnpad k (fst . unCfb k zeroIV)
+	where
+	block = fromIntegral $ blockSizeBytes `for` k
+
+padThenUnpad :: (BlockCipher k) => k -> (LZ.ByteString -> LZ.ByteString) -> LZ.ByteString -> LZ.ByteString
+padThenUnpad k f s = dropPadEnd (f padded)
 	where
 	dropPadEnd s = LZ.take (LZ.length s - padAmount) s
 	padded = s `LZ.append` LZ.replicate padAmount 0
@@ -263,6 +285,10 @@ sign keys message hsh keyid timestamp g =
 	Just signOver = find isSignable m
 	OpenPGP.Message m = message
 
+mkMDC :: LZ.ByteString -> LZ.ByteString -> OpenPGP.Packet
+mkMDC prefix msg = OpenPGP.ModificationDetectionCodePacket $ toLazyBS $ fst $
+	hash OpenPGP.SHA1 $ LZ.concat [prefix, msg, LZ.pack [0xD3, 0x14]]
+
 -- | Decrypt an OpenPGP message
 --
 -- TODO: verify MDC if present
@@ -280,12 +306,9 @@ decryptPacket :: Decrypt -> OpenPGP.Packet -> Maybe OpenPGP.Message
 decryptPacket d (OpenPGP.EncryptedDataPacket {
 		OpenPGP.version = 1,
 		OpenPGP.encrypted_data = encd
-	}) | rechk == decode mdc = decode msg
+	}) | mkMDC prefix msg == decode mdc = maybeDecode msg
 	   | otherwise = Nothing
 	where
-	rechk = OpenPGP.ModificationDetectionCodePacket $ toLazyBS $ fst $
-		hash OpenPGP.SHA1 $
-		prefix `LZ.append` msg `LZ.append` LZ.pack [0xD3, 0x14]
 	(msg,mdc) = LZ.splitAt (LZ.length content - 22) content
 	(prefix, content) = d encd
 decryptPacket _ (OpenPGP.EncryptedDataPacket {
