@@ -28,13 +28,10 @@ main = do
 			('d', RSA.private_d priv), ('p', RSA.private_q priv),
 			('q', RSA.private_p priv), ('u', RSA.private_qinv priv)],
 		OpenPGP.s2k_useage = 0,
-		OpenPGP.symmetric_type = undefined,
-		OpenPGP.s2k_type = undefined,
-		OpenPGP.s2k_hash_algorithm = undefined,
-		OpenPGP.s2k_salt = undefined,
-		OpenPGP.s2k_count = undefined,
-		OpenPGP.encrypted_data = undefined,
-		OpenPGP.private_hash = undefined,
+		OpenPGP.s2k = OpenPGP.S2K 100 LZ.empty, -- Bogus, unused S2K
+		OpenPGP.symmetric_algorithm = OpenPGP.Unencrypted,
+		OpenPGP.encrypted_data = LZ.empty,
+		OpenPGP.private_hash = Nothing,
 		OpenPGP.is_subkey = False}
 
 	let userID = OpenPGP.UserIDPacket "Test <test@example.com>"
