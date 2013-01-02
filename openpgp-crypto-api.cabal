@@ -78,6 +78,7 @@ test-suite tests
                 cereal,
                 HUnit,
                 QuickCheck >= 2.4.1.1,
+                quickcheck-instances,
                 test-framework,
                 test-framework-hunit,
                 test-framework-quickcheck2

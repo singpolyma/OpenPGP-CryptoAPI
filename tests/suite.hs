@@ -2,8 +2,10 @@ import Test.Framework (defaultMain, testGroup, Test)
 import Test.Framework.Providers.HUnit
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
+import Test.QuickCheck.Instances ()
 import Test.HUnit hiding (Test)
 
+import Data.Monoid
 import Data.List (find)
 import Crypto.Random
 import Data.Binary
@@ -11,6 +13,7 @@ import qualified Data.OpenPGP as OpenPGP
 import qualified Data.OpenPGP.CryptoAPI as OpenPGP
 import qualified Data.ByteString.Lazy as LZ
 import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString, toString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.UTF8 as BS (fromString)
 
 instance Arbitrary OpenPGP.HashAlgorithm where
@@ -68,11 +71,14 @@ prop_sign_and_verify secring g halgo filename msg = do
 			halgo keyid 12341234 g
 	return $ OpenPGP.verify secring (OpenPGP.Message [sig,m]) 0
 
-prop_encrypt_and_decrypt :: (CryptoRandomGen g) => OpenPGP.Message -> g -> OpenPGP.SymmetricAlgorithm -> String -> String -> Bool
-prop_encrypt_and_decrypt secring g algo filename msg =
-	case OpenPGP.encrypt secring algo m g of
-		Left _ -> False
-		Right (encM, _) -> OpenPGP.decryptAsymmetric secring encM == Just m
+prop_encrypt_and_decrypt :: (CryptoRandomGen g) => OpenPGP.Message -> g -> BS.ByteString -> OpenPGP.SymmetricAlgorithm -> String -> String -> Bool
+prop_encrypt_and_decrypt secring g pass algo filename msg =
+	case (OpenPGP.encrypt [] secring algo m g, OpenPGP.encrypt [pass] mempty algo m g) of
+		(Left _, _) -> False
+		(_, Left _) -> False
+		(Right (encA, _), Right (encB, _)) ->
+			(OpenPGP.decryptAsymmetric secring encA == Just m) &&
+			(OpenPGP.decryptSymmetric [pass] encB == Just m)
 	where
 	m = OpenPGP.Message [OpenPGP.LiteralDataPacket {
 			OpenPGP.format = 'u',
@@ -103,7 +109,8 @@ tests secring oneKey rng =
 		],
 		testGroup "Decryption" [
 			testCase "decrypt hello" testDecryptHello,
-			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric.gpg")
+			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric.gpg"),
+			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric2.gpg")
 		],
 		testGroup "Encryption" [
 			testProperty "Encrypted messages decrypt" (prop_encrypt_and_decrypt oneKey rng)

@@ -10,7 +10,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT)
 import Data.Binary
 import Crypto.Classes hiding (hash,sign,verify,encode)
-import Data.Tagged (untag, asTaggedTypeOf)
+import Data.Tagged (untag, asTaggedTypeOf, Tagged(..))
 import Crypto.Modes
 import Crypto.Random (CryptoRandomGen, GenError(GenErrorOther), genBytes)
 import Crypto.Hash.MD5 (MD5)
@@ -97,9 +97,12 @@ pgpCFBPrefix k g =
 
 pgpCFB :: (BlockCipher k, CryptoRandomGen g) => k -> (LZ.ByteString -> LZ.ByteString -> LZ.ByteString) -> Encrypt g
 pgpCFB k sufGen bs g =
-	(padThenUnpad k (fst . cfb k zeroIV) (LZ.concat [p, bs, sufGen p bs]), g')
+	(simpleCFB k (LZ.concat [p, bs, sufGen p bs]), g')
 	where
 	(p,g') = pgpCFBPrefix k g
+
+simpleCFB :: (BlockCipher k) => k -> LZ.ByteString -> LZ.ByteString
+simpleCFB k = padThenUnpad k (fst . cfb k zeroIV)
 
 pgpUnCFB :: (BlockCipher k) => k -> Decrypt
 pgpUnCFB k = LZ.splitAt (2 + block) . simpleUnCFB k
@@ -116,6 +119,13 @@ padThenUnpad k f s = dropPadEnd (f padded)
 	padded = s `LZ.append` LZ.replicate padAmount 0
 	padAmount = block - (LZ.length s `mod` block)
 	block = fromIntegral $ blockSizeBytes `for` k
+
+addBitLen :: LZ.ByteString -> LZ.ByteString
+addBitLen bytes = encode (bitLen bytes :: Word16) `LZ.append` bytes
+	where
+	bitLen bytes = (fromIntegral (LZ.length bytes) - 1) * 8 + sigBit bytes
+	sigBit bytes = fst $ until ((==0) . snd)
+		(first (+1) . second (`shiftR` 1)) (0,LZ.index bytes 0)
 
 -- Drops 2 because the value is an MPI
 rsaDecrypt :: RSA.PrivateKey -> BS.ByteString -> Maybe BS.ByteString
@@ -299,29 +309,56 @@ sign keys message hsh keyid timestamp g =
 	OpenPGP.Message m = message
 
 encrypt :: (CryptoRandomGen g) =>
-	OpenPGP.Message               -- ^ PublicKeys, all of which will be used
+	[BS.ByteString]               -- ^ Passphrases, all of which will be used
+	-> OpenPGP.Message            -- ^ PublicKeys, all of which will be used
 	-> OpenPGP.SymmetricAlgorithm -- ^ Cipher to use
 	-> OpenPGP.Message            -- ^ The Message to encrypt
 	-> g                          -- ^ Random number generator
 	-> Either GenError (OpenPGP.Message, g)
-encrypt (OpenPGP.Message keys) algo msg = runStateT $ do
+encrypt pass (OpenPGP.Message keys) algo msg = runStateT $ do
 	(sk, encP) <- sessionFor algo msg
-	OpenPGP.Message . (++[encP]) <$>
-		mapM (encryptSessionKey sk) (filter isKey keys)
+	OpenPGP.Message . (++[encP]) <$> liftA2 (++)
+		(mapM (encryptSessionKeyAsymmetric sk) (filter isKey keys))
+		(mapM (encryptSessionKeySymmetric (LZ.take (LZ.length sk - 2) sk) algo) pass)
 
-encryptSessionKey :: (CryptoRandomGen g) => LZ.ByteString -> OpenPGP.Packet -> StateT g (Either GenError) OpenPGP.Packet
-encryptSessionKey sk pk = OpenPGP.AsymmetricSessionKeyPacket 3
+encryptSessionKeyAsymmetric :: (CryptoRandomGen g) => LZ.ByteString -> OpenPGP.Packet -> StateT g (Either GenError) OpenPGP.Packet
+encryptSessionKeyAsymmetric sk pk = OpenPGP.AsymmetricSessionKeyPacket 3
 	(fingerprint pk)
 	(OpenPGP.key_algorithm pk)
 	. addBitLen <$> encd (OpenPGP.key_algorithm pk)
 	where
-	addBitLen bytes = encode (bitLen bytes :: Word16) `LZ.append` bytes
-	bitLen bytes = (fromIntegral (LZ.length bytes) - 1) * 8 + sigBit bytes
-	sigBit bytes = fst $ until ((==0) . snd)
-		(first (+1) . second (`shiftR` 1)) (0,LZ.index bytes 0)
-
 	encd OpenPGP.RSA = toLazyBS <$> rsaEncrypt (rsaKey pk) (toStrictBS sk)
 	encd _ = lift $ Left $ GenErrorOther $ "Unsupported PublicKey: " ++ show pk
+
+encryptSessionKeySymmetric :: (CryptoRandomGen g) => LZ.ByteString -> OpenPGP.SymmetricAlgorithm -> BS.ByteString -> StateT g (Either GenError) OpenPGP.Packet
+encryptSessionKeySymmetric sk salgo pass = do
+	s2k <- s2k
+	return $ OpenPGP.SymmetricSessionKeyPacket 4 salgo s2k
+		(string2sencrypt salgo s2k (toLazyBS pass) sk)
+	where
+	halgo = s2kHashAlgorithmFor salgo
+	s2k = OpenPGP.IteratedSaltedS2K halgo . decode . toLazyBS <$>
+		(StateT $ genBytes 8) <*> pure 65536
+
+s2kHashAlgorithmFor :: OpenPGP.SymmetricAlgorithm -> OpenPGP.HashAlgorithm
+s2kHashAlgorithmFor OpenPGP.AES128 = s2kHashAlgorithm `for` (undefined :: AES128)
+s2kHashAlgorithmFor OpenPGP.AES192 = s2kHashAlgorithm `for` (undefined :: AES192)
+s2kHashAlgorithmFor OpenPGP.AES256 = s2kHashAlgorithm `for` (undefined :: AES256)
+s2kHashAlgorithmFor OpenPGP.Blowfish = s2kHashAlgorithm `for` (undefined :: Blowfish)
+s2kHashAlgorithmFor algo = error $ "Unsupported SymmetricAlgorithm " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.s2kHashAlgorithmFor"
+
+s2kHashAlgorithm :: (BlockCipher k) => Tagged k OpenPGP.HashAlgorithm
+s2kHashAlgorithm = v
+	where
+	v = Tagged $ case () of
+		_ | ksize <= 160 -> OpenPGP.SHA1
+		  | ksize <= 224 -> OpenPGP.SHA224
+		  | ksize <= 384 -> OpenPGP.SHA384
+		  | otherwise    -> OpenPGP.SHA512
+	ksize = keyLength `tagOfTag` v
+
+tagOfTag :: Tagged a c -> Tagged a b -> c
+tagOfTag a b = a `for` (undefined `asTaggedTypeOf` b)
 
 sessionFor :: (CryptoRandomGen g) => OpenPGP.SymmetricAlgorithm -> OpenPGP.Message -> StateT g (Either GenError) (LZ.ByteString, OpenPGP.Packet)
 sessionFor algo@OpenPGP.AES128 msg = do
@@ -408,10 +445,11 @@ getSymmetricSessionKey pass (OpenPGP.Message ps) =
 		if LZ.null encd then
 			map (((,)algo) . string2decrypt algo s2k) pass'
 		else
-			mapMaybe (decodeSess . string2sdecrypt algo s2k encd) pass'
+			mapMaybe (\p -> decodeSess $ string2sdecrypt algo s2k p encd) pass'
 	) sessionKeys
 	where
-	decodeSess = decodeSessionKey . toStrictBS
+	decodeSess s = let (a, k) = LZ.splitAt 1 s in
+		(,) (decode a) <$> decodeSymKey (decode a) (toStrictBS k)
 	sessionKeys = filter isSymmetricSessionKey ps
 	pass' = map toLazyBS pass
 
@@ -456,6 +494,13 @@ decodeSymKey OpenPGP.AES192 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES192)) 
 decodeSymKey OpenPGP.AES256 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES256)) <$> sDecode k
 decodeSymKey OpenPGP.Blowfish k = pgpUnCFB <$> (`asTypeOf` (undefined :: Blowfish)) <$> sDecode k
 decodeSymKey _ _ = Nothing
+
+string2sencrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> LZ.ByteString -> LZ.ByteString
+string2sencrypt OpenPGP.AES128 s2k s = simpleCFB (string2key s2k s :: AES128)
+string2sencrypt OpenPGP.AES192 s2k s = simpleCFB (string2key s2k s :: AES192)
+string2sencrypt OpenPGP.AES256 s2k s = simpleCFB (string2key s2k s :: AES256)
+string2sencrypt OpenPGP.Blowfish s2k s = simpleCFB (string2key s2k s :: Blowfish)
+string2sencrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2decrypt"
 
 string2decrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> Decrypt
 string2decrypt OpenPGP.AES128 s2k s = pgpUnCFB (string2key s2k s :: AES128)
