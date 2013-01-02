@@ -416,7 +416,7 @@ decryptSymmetric ::
 decryptSymmetric pass msg@(OpenPGP.Message pkts) = do
 	let ds = map snd $ getSymmetricSessionKey pass msg
 	pkt <- find isEncryptedData pkts
-	listToMaybe $ mapMaybe (flip decryptPacket pkt) ds
+	listToMaybe $ mapMaybe (`decryptPacket` pkt) ds
 
 -- | Decrypt a single packet, given the decryptor
 decryptPacket :: Decrypt -> OpenPGP.Packet -> Maybe OpenPGP.Message
@@ -443,7 +443,7 @@ getSymmetricSessionKey pass (OpenPGP.Message ps) =
 			OpenPGP.encrypted_data = encd
 		} ->
 		if LZ.null encd then
-			map (((,)algo) . string2decrypt algo s2k) pass'
+			map ((,) algo . string2decrypt algo s2k) pass'
 		else
 			mapMaybe (\p -> decodeSess $ string2sdecrypt algo s2k p encd) pass'
 	) sessionKeys
