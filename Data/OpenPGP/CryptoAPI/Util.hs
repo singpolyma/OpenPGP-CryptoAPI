@@ -53,6 +53,10 @@ isAsymmetricSessionKey :: OpenPGP.Packet -> Bool
 isAsymmetricSessionKey (OpenPGP.AsymmetricSessionKeyPacket {}) = True
 isAsymmetricSessionKey                                       _ = False
 
+isSymmetricSessionKey :: OpenPGP.Packet -> Bool
+isSymmetricSessionKey (OpenPGP.SymmetricSessionKeyPacket {}) = True
+isSymmetricSessionKey                                      _ = False
+
 isEncryptedData :: OpenPGP.Packet -> Bool
 isEncryptedData (OpenPGP.EncryptedDataPacket {}) = True
 isEncryptedData                                _ = False

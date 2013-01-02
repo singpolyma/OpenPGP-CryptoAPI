@@ -11,12 +11,17 @@ import qualified Data.OpenPGP as OpenPGP
 import qualified Data.OpenPGP.CryptoAPI as OpenPGP
 import qualified Data.ByteString.Lazy as LZ
 import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString, toString)
+import qualified Data.ByteString.UTF8 as BS (fromString)
 
 instance Arbitrary OpenPGP.HashAlgorithm where
 	arbitrary = elements [OpenPGP.MD5, OpenPGP.SHA1, OpenPGP.RIPEMD160, OpenPGP.SHA256, OpenPGP.SHA384, OpenPGP.SHA512, OpenPGP.SHA224]
 
 instance Arbitrary OpenPGP.SymmetricAlgorithm where
 	arbitrary = elements [OpenPGP.AES128, OpenPGP.AES192, OpenPGP.AES256, OpenPGP.Blowfish]
+
+isLiteral :: OpenPGP.Packet -> Bool
+isLiteral (OpenPGP.LiteralDataPacket {}) = True
+isLiteral                              _ = False
 
 testFingerprint :: FilePath -> String -> Assertion
 testFingerprint fp kf = do
@@ -33,16 +38,22 @@ testVerifyMessage keyring message = do
 
 testDecryptHello :: Assertion
 testDecryptHello = do
-	keys <- fmap decode $ LZ.readFile $ "tests/data/helloKey.gpg"
-	m <- fmap decode $ LZ.readFile $ "tests/data/hello.gpg"
+	keys <- fmap decode $ LZ.readFile "tests/data/helloKey.gpg"
+	m <- fmap decode $ LZ.readFile "tests/data/hello.gpg"
 	let Just (OpenPGP.Message [OpenPGP.CompressedDataPacket {
 			OpenPGP.message = OpenPGP.Message msg
-		}]) = OpenPGP.decrypt keys m
+		}]) = OpenPGP.decryptAsymmetric keys m
 	let content = fmap (LZ.toString . OpenPGP.content) (find isLiteral msg)
 	assertEqual "Decrypt hello" (Just "hello\n") content
-	where
-	isLiteral (OpenPGP.LiteralDataPacket {}) = True
-	isLiteral                              _ = False
+
+testDecryptSymmetric :: String -> String -> FilePath -> Assertion
+testDecryptSymmetric pass cnt file = do
+	m <- fmap decode $ LZ.readFile $ "tests/data/" ++ file
+	let Just (OpenPGP.Message [OpenPGP.CompressedDataPacket {
+			OpenPGP.message = OpenPGP.Message msg
+		}]) = OpenPGP.decryptSymmetric [BS.fromString pass] m
+	let content = fmap (LZ.toString . OpenPGP.content) (find isLiteral msg)
+	assertEqual "Decrypt symmetric" (Just cnt) content
 
 prop_sign_and_verify :: (CryptoRandomGen g) => OpenPGP.Message -> g -> OpenPGP.HashAlgorithm -> String -> String -> Gen Bool
 prop_sign_and_verify secring g halgo filename msg = do
@@ -61,7 +72,7 @@ prop_encrypt_and_decrypt :: (CryptoRandomGen g) => OpenPGP.Message -> g -> OpenP
 prop_encrypt_and_decrypt secring g algo filename msg =
 	case OpenPGP.encrypt secring algo m g of
 		Left _ -> False
-		Right (encM, _) -> OpenPGP.decrypt secring encM == Just m
+		Right (encM, _) -> OpenPGP.decryptAsymmetric secring encM == Just m
 	where
 	m = OpenPGP.Message [OpenPGP.LiteralDataPacket {
 			OpenPGP.format = 'u',
@@ -91,7 +102,8 @@ tests secring oneKey rng =
 			testProperty "Crypto signatures verify" (prop_sign_and_verify secring rng)
 		],
 		testGroup "Decryption" [
-			testCase "decrypt hello" testDecryptHello
+			testCase "decrypt hello" testDecryptHello,
+			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric.gpg")
 		],
 		testGroup "Encryption" [
 			testProperty "Encrypted messages decrypt" (prop_encrypt_and_decrypt oneKey rng)

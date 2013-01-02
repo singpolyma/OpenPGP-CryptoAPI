@@ -1,4 +1,4 @@
-module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify, encrypt, decrypt) where
+module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify, encrypt, decryptAsymmetric, decryptSymmetric) where
 
 import Data.Char
 import Data.Bits
@@ -102,9 +102,12 @@ pgpCFB k sufGen bs g =
 	(p,g') = pgpCFBPrefix k g
 
 pgpUnCFB :: (BlockCipher k) => k -> Decrypt
-pgpUnCFB k = LZ.splitAt (2 + block) . padThenUnpad k (fst . unCfb k zeroIV)
+pgpUnCFB k = LZ.splitAt (2 + block) . simpleUnCFB k
 	where
 	block = fromIntegral $ blockSizeBytes `for` k
+
+simpleUnCFB :: (BlockCipher k) => k -> LZ.ByteString -> LZ.ByteString
+simpleUnCFB k = padThenUnpad k (fst . unCfb k zeroIV)
 
 padThenUnpad :: (BlockCipher k) => k -> (LZ.ByteString -> LZ.ByteString) -> LZ.ByteString -> LZ.ByteString
 padThenUnpad k f s = dropPadEnd (f padded)
@@ -358,24 +361,32 @@ sessionKeyChk :: BS.ByteString -> Word16
 sessionKeyChk key = fromIntegral $
 	BS.foldl' (\x y -> x + fromIntegral y) (0::Integer) key `mod` 65536
 
--- | Decrypt an OpenPGP message
---
--- TODO: verify MDC if present
-decrypt ::
+-- | Decrypt an OpenPGP message using secret key
+decryptAsymmetric ::
 	OpenPGP.Message    -- ^ SecretKeys, one of which will be used
 	-> OpenPGP.Message -- ^ An OpenPGP Message containing AssymetricSessionKey and EncryptedData
 	-> Maybe OpenPGP.Message
-decrypt keys msg@(OpenPGP.Message pkts) = do
+decryptAsymmetric keys msg@(OpenPGP.Message pkts) = do
 	(_, d) <- getAsymmetricSessionKey keys msg
 	pkt <- find isEncryptedData pkts
 	decryptPacket d pkt
+
+-- | Decrypt an OpenPGP message using passphrase
+decryptSymmetric ::
+	[BS.ByteString]    -- ^ Passphrases, one of which will be used
+	-> OpenPGP.Message -- ^ An OpenPGP Message containing AssymetricSessionKey and EncryptedData
+	-> Maybe OpenPGP.Message
+decryptSymmetric pass msg@(OpenPGP.Message pkts) = do
+	let ds = map snd $ getSymmetricSessionKey pass msg
+	pkt <- find isEncryptedData pkts
+	listToMaybe $ mapMaybe (flip decryptPacket pkt) ds
 
 -- | Decrypt a single packet, given the decryptor
 decryptPacket :: Decrypt -> OpenPGP.Packet -> Maybe OpenPGP.Message
 decryptPacket d (OpenPGP.EncryptedDataPacket {
 		OpenPGP.version = 1,
 		OpenPGP.encrypted_data = encd
-	}) | mkMDC prefix msg == decode mdc = maybeDecode msg
+	}) | Just (mkMDC prefix msg) == maybeDecode mdc = maybeDecode msg
 	   | otherwise = Nothing
 	where
 	(msg,mdc) = LZ.splitAt (LZ.length content - 22) content
@@ -385,7 +396,26 @@ decryptPacket _ (OpenPGP.EncryptedDataPacket {
 	}) = error "TODO: old-style encryption with no MDC in Data.OpenPGP.CryptoAPI.decryptPacket"
 decryptPacket _ _ = error "Can only decrypt EncryptedDataPacket in Data.OpenPGP.CryptoAPI.decryptPacket"
 
--- | Decrypt a symmetric session key
+getSymmetricSessionKey ::
+	[BS.ByteString]    -- ^ Passphrases, one of which will be used
+	-> OpenPGP.Message -- ^ An OpenPGP Message containing SymmetricSessionKey
+	-> [(OpenPGP.SymmetricAlgorithm, Decrypt)]
+getSymmetricSessionKey pass (OpenPGP.Message ps) =
+	concatMap (\OpenPGP.SymmetricSessionKeyPacket {
+			OpenPGP.s2k = s2k, OpenPGP.symmetric_algorithm = algo,
+			OpenPGP.encrypted_data = encd
+		} ->
+		if LZ.null encd then
+			map (((,)algo) . string2decrypt algo s2k) pass'
+		else
+			mapMaybe (decodeSess . string2sdecrypt algo s2k encd) pass'
+	) sessionKeys
+	where
+	decodeSess = decodeSessionKey . toStrictBS
+	sessionKeys = filter isSymmetricSessionKey ps
+	pass' = map toLazyBS pass
+
+-- | Decrypt an asymmetrically encrypted symmetric session key
 getAsymmetricSessionKey ::
 	OpenPGP.Message    -- ^ SecretKeys, one of which will be used
 	-> OpenPGP.Message -- ^ An OpenPGP Message containing AssymetricSessionKey
@@ -426,3 +456,24 @@ decodeSymKey OpenPGP.AES192 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES192)) 
 decodeSymKey OpenPGP.AES256 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES256)) <$> sDecode k
 decodeSymKey OpenPGP.Blowfish k = pgpUnCFB <$> (`asTypeOf` (undefined :: Blowfish)) <$> sDecode k
 decodeSymKey _ _ = Nothing
+
+string2decrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> Decrypt
+string2decrypt OpenPGP.AES128 s2k s = pgpUnCFB (string2key s2k s :: AES128)
+string2decrypt OpenPGP.AES192 s2k s = pgpUnCFB (string2key s2k s :: AES192)
+string2decrypt OpenPGP.AES256 s2k s = pgpUnCFB (string2key s2k s :: AES256)
+string2decrypt OpenPGP.Blowfish s2k s = pgpUnCFB (string2key s2k s :: Blowfish)
+string2decrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2decrypt"
+
+string2sdecrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> LZ.ByteString -> LZ.ByteString
+string2sdecrypt OpenPGP.AES128 s2k s = simpleUnCFB (string2key s2k s :: AES128)
+string2sdecrypt OpenPGP.AES192 s2k s = simpleUnCFB (string2key s2k s :: AES192)
+string2sdecrypt OpenPGP.AES256 s2k s = simpleUnCFB (string2key s2k s :: AES256)
+string2sdecrypt OpenPGP.Blowfish s2k s = simpleUnCFB (string2key s2k s :: Blowfish)
+string2sdecrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2sdecrypt"
+
+string2key :: (BlockCipher k) => OpenPGP.S2K -> LZ.ByteString -> k
+string2key s2k s = k
+	where
+	Right k = Serialize.decode $ toStrictBS $
+		LZ.take ksize $ OpenPGP.string2key (fst `oo` hash) s2k s
+	ksize = (fromIntegral $ keyLength `for` k) `div` 8
