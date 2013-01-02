@@ -56,7 +56,7 @@ library
                 openpgp,
                 crypto-api >= 0.9,
                 tagged,
-                cryptocipher >= 0.3.7,
+                cryptocipher >= 0.3.6,
                 cryptohash,
                 cereal
 
@@ -73,7 +73,7 @@ test-suite tests
                 openpgp,
                 crypto-api >= 0.9,
                 tagged,
-                cryptocipher >= 0.3.7,
+                cryptocipher >= 0.3.6,
                 cryptohash,
                 cereal,
                 HUnit,
