@@ -519,6 +519,6 @@ string2sdecrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show 
 string2key :: (BlockCipher k) => OpenPGP.S2K -> LZ.ByteString -> k
 string2key s2k s = k
 	where
-	Right k = Serialize.decode $ toStrictBS $
+	Just k = buildKey $ toStrictBS $
 		LZ.take ksize $ OpenPGP.string2key (fst `oo` hash) s2k s
-	ksize = (fromIntegral $ keyLength `for` k) `div` 8
+	ksize = fromIntegral (keyLength `for` k) `div` 8
