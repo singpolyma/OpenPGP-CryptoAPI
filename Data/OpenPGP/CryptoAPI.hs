@@ -284,7 +284,15 @@ sign keys message hsh keyid timestamp g = sig
 			OpenPGP.IssuerPacket $ fingerprint k
 		] ++ (case signOver of
 			OpenPGP.LiteralDataPacket {} -> []
-			_ -> [] -- TODO: OpenPGP.KeyFlagsPacket [0x01, 0x02]
+			_ -> [OpenPGP.KeyFlagsPacket {
+					OpenPGP.certify_keys = True,
+					OpenPGP.sign_data = True,
+					OpenPGP.encrypt_communication = False,
+					OpenPGP.encrypt_storage = False,
+					OpenPGP.split_key = False,
+					OpenPGP.authentication = False,
+					OpenPGP.group_key = False
+				}]
 		))
 		[]
 		0 -- TODO
