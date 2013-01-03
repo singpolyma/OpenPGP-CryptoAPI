@@ -227,8 +227,7 @@ verify keys message sigidx =
 	signature_over = toStrictBS $ dta `LZ.append` OpenPGP.trailer sig
 	Just k = OpenPGP.signature_issuer sig >>= find_key keys
 	sig = sigs !! sigidx
-	(sigs, (OpenPGP.LiteralDataPacket {OpenPGP.content = dta}):_) =
-		OpenPGP.signatures_and_data message
+	[OpenPGP.DataSignature (OpenPGP.LiteralDataPacket {OpenPGP.content = dta}) sigs] = OpenPGP.signatures message
 
 -- | Sign data or key/userID pair.
 sign :: (CryptoRandomGen g) =>
