@@ -32,7 +32,10 @@ hexString = foldr (pad `oo` showHex) ""
 	      | otherwise = s
 
 maybeDecode :: (Binary a) => LZ.ByteString -> Maybe a
-maybeDecode bs = (\(_,_,x) -> x) <$> hush (runGetOrFail get bs)
+maybeDecode = maybeGet get
+
+maybeGet :: (Binary a) => Get a -> LZ.ByteString -> Maybe a
+maybeGet g bs = (\(_,_,x) -> x) <$> hush (runGetOrFail g bs)
 
 sDecode :: (Serialize.Serialize a) => BS.ByteString -> Maybe a
 sDecode = hush . Serialize.decode

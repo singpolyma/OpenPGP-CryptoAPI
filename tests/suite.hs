@@ -5,6 +5,7 @@ import Test.QuickCheck
 import Test.QuickCheck.Instances ()
 import Test.HUnit hiding (Test)
 
+import Data.Maybe
 import Data.Monoid
 import Data.List (find)
 import Crypto.Random
@@ -58,6 +59,12 @@ testDecryptSymmetric pass cnt file = do
 	let content = fmap (LZ.toString . OpenPGP.content) (find isLiteral msg)
 	assertEqual "Decrypt symmetric" (Just cnt) content
 
+testDecryptSecretKey :: String -> FilePath -> Assertion
+testDecryptSecretKey pass file = do
+	m <- fmap decode $ LZ.readFile $ "tests/data/" ++ file
+	let d = OpenPGP.decryptSecretKey (BS.fromString pass) m
+	assertEqual "Decrypt secret key" True (isJust d)
+
 prop_sign_and_verify :: (CryptoRandomGen g) => OpenPGP.Message -> g -> OpenPGP.HashAlgorithm -> String -> String -> Gen Bool
 prop_sign_and_verify secring g halgo filename msg = do
 	keyid <- elements ["FEF8AFA0F661C3EE","7F69FA376B020509"]
@@ -110,7 +117,8 @@ tests secring oneKey rng =
 		testGroup "Decryption" [
 			testCase "decrypt hello" testDecryptHello,
 			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric.gpg"),
-			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric2.gpg")
+			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric2.gpg"),
+			testCase "decrypt secret key" (testDecryptSecretKey "hello" "encryptedSecretKey.gpg")
 		],
 		testGroup "Encryption" [
 			testProperty "Encrypted messages decrypt" (prop_encrypt_and_decrypt oneKey rng)

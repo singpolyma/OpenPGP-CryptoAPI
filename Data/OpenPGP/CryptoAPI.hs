@@ -1,4 +1,4 @@
-module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify, encrypt, decryptAsymmetric, decryptSymmetric) where
+module Data.OpenPGP.CryptoAPI (fingerprint, sign, verify, encrypt, decryptAsymmetric, decryptSymmetric, decryptSecretKey) where
 
 import Data.Char
 import Data.Bits
@@ -6,6 +6,7 @@ import Data.List (find)
 import Data.Maybe (mapMaybe, catMaybes, listToMaybe)
 import Control.Arrow
 import Control.Applicative
+import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT)
 import Data.Binary
@@ -97,20 +98,20 @@ pgpCFBPrefix k g =
 
 pgpCFB :: (BlockCipher k, CryptoRandomGen g) => k -> (LZ.ByteString -> LZ.ByteString -> LZ.ByteString) -> Encrypt g
 pgpCFB k sufGen bs g =
-	(simpleCFB k (LZ.concat [p, bs, sufGen p bs]), g')
+	(simpleCFB k zeroIV (LZ.concat [p, bs, sufGen p bs]), g')
 	where
 	(p,g') = pgpCFBPrefix k g
 
-simpleCFB :: (BlockCipher k) => k -> LZ.ByteString -> LZ.ByteString
-simpleCFB k = padThenUnpad k (fst . cfb k zeroIV)
+simpleCFB :: (BlockCipher k) => k -> IV k -> LZ.ByteString -> LZ.ByteString
+simpleCFB k iv = padThenUnpad k (fst . cfb k iv)
 
 pgpUnCFB :: (BlockCipher k) => k -> Decrypt
-pgpUnCFB k = LZ.splitAt (2 + block) . simpleUnCFB k
+pgpUnCFB k = LZ.splitAt (2 + block) . simpleUnCFB k zeroIV
 	where
 	block = fromIntegral $ blockSizeBytes `for` k
 
-simpleUnCFB :: (BlockCipher k) => k -> LZ.ByteString -> LZ.ByteString
-simpleUnCFB k = padThenUnpad k (fst . unCfb k zeroIV)
+simpleUnCFB :: (BlockCipher k) => k -> IV k -> LZ.ByteString -> LZ.ByteString
+simpleUnCFB k iv = padThenUnpad k (fst . unCfb k iv)
 
 padThenUnpad :: (BlockCipher k) => k -> (LZ.ByteString -> LZ.ByteString) -> LZ.ByteString -> LZ.ByteString
 padThenUnpad k f s = dropPadEnd (f padded)
@@ -380,7 +381,7 @@ sessionFor algo _ = lift $ Left $ GenErrorOther $ "Unsupported cipher: " ++ show
 
 sessionKeyEncode :: (BlockCipher k) => k -> OpenPGP.SymmetricAlgorithm -> LZ.ByteString
 sessionKeyEncode sk algo =
-	LZ.concat [encode algo, toLazyBS bs, encode $ sessionKeyChk bs]
+	LZ.concat [encode algo, toLazyBS bs, encode $ checksum bs]
 	where
 	bs = Serialize.encode sk
 
@@ -393,9 +394,35 @@ mkMDC :: LZ.ByteString -> LZ.ByteString -> OpenPGP.Packet
 mkMDC prefix msg = OpenPGP.ModificationDetectionCodePacket $ toLazyBS $ fst $
 	hash OpenPGP.SHA1 $ LZ.concat [prefix, msg, LZ.pack [0xD3, 0x14]]
 
-sessionKeyChk :: BS.ByteString -> Word16
-sessionKeyChk key = fromIntegral $
+checksum :: BS.ByteString -> Word16
+checksum key = fromIntegral $
 	BS.foldl' (\x y -> x + fromIntegral y) (0::Integer) key `mod` 65536
+
+decryptSecretKey ::
+	BS.ByteString           -- ^ Passphrase
+	-> OpenPGP.Packet       -- ^ Encrypted SecretKeyPacket
+	-> Maybe OpenPGP.Packet -- ^ Decrypted SecretKeyPacket
+decryptSecretKey pass k@(OpenPGP.SecretKeyPacket {
+		OpenPGP.version = 4, OpenPGP.key_algorithm = kalgo,
+		OpenPGP.s2k = s2k, OpenPGP.symmetric_algorithm = salgo,
+		OpenPGP.key = existing, OpenPGP.encrypted_data = encd
+	}) | chkF material == toStrictBS chk =
+		fmap (\m -> k {
+			OpenPGP.s2k_useage = 0,
+			OpenPGP.symmetric_algorithm = OpenPGP.Unencrypted,
+			OpenPGP.encrypted_data = LZ.empty,
+			OpenPGP.key = m
+		}) parseMaterial
+	   | otherwise = Nothing
+	where
+	parseMaterial = maybeGet
+		(foldM (\m f -> do {mpi <- get; return $ (f,mpi):m}) existing
+		(OpenPGP.secret_key_fields kalgo)) material
+	(material, chk) = LZ.splitAt (LZ.length decd - chkSize) decd
+	(chkSize, chkF)
+		| OpenPGP.s2k_useage k == 254 = (20, fst . hash OpenPGP.SHA1)
+		| otherwise = (2, Serialize.encode . checksum . toStrictBS)
+	decd = string2sdecrypt salgo s2k (toLazyBS pass) (EncipheredWithIV encd)
 
 -- | Decrypt an OpenPGP message using secret key
 decryptAsymmetric ::
@@ -444,7 +471,7 @@ getSymmetricSessionKey pass (OpenPGP.Message ps) =
 		if LZ.null encd then
 			map ((,) algo . string2decrypt algo s2k) pass'
 		else
-			mapMaybe (\p -> decodeSess $ string2sdecrypt algo s2k p encd) pass'
+			mapMaybe (\p -> decodeSess $ string2sdecrypt algo s2k p (EncipheredZeroIV encd)) pass'
 	) sessionKeys
 	where
 	decodeSess s = let (a, k) = LZ.splitAt 1 s in
@@ -478,7 +505,7 @@ getAsymmetricSessionKey keys (OpenPGP.Message ps) =
 
 decodeSessionKey :: BS.ByteString -> Maybe (OpenPGP.SymmetricAlgorithm, Decrypt)
 decodeSessionKey sk
-	| sessionKeyChk key == (decode (toLazyBS chk) :: Word16) = do
+	| checksum key == (decode (toLazyBS chk) :: Word16) = do
 		algo <- maybeDecode (toLazyBS algoByte)
 		decrypt <- decodeSymKey algo key
 		return (algo, decrypt)
@@ -495,10 +522,10 @@ decodeSymKey OpenPGP.Blowfish k = pgpUnCFB <$> (`asTypeOf` (undefined :: Blowfis
 decodeSymKey _ _ = Nothing
 
 string2sencrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> LZ.ByteString -> LZ.ByteString
-string2sencrypt OpenPGP.AES128 s2k s = simpleCFB (string2key s2k s :: AES128)
-string2sencrypt OpenPGP.AES192 s2k s = simpleCFB (string2key s2k s :: AES192)
-string2sencrypt OpenPGP.AES256 s2k s = simpleCFB (string2key s2k s :: AES256)
-string2sencrypt OpenPGP.Blowfish s2k s = simpleCFB (string2key s2k s :: Blowfish)
+string2sencrypt OpenPGP.AES128 s2k s = simpleCFB (string2key s2k s :: AES128) zeroIV
+string2sencrypt OpenPGP.AES192 s2k s = simpleCFB (string2key s2k s :: AES192) zeroIV
+string2sencrypt OpenPGP.AES256 s2k s = simpleCFB (string2key s2k s :: AES256) zeroIV
+string2sencrypt OpenPGP.Blowfish s2k s = simpleCFB (string2key s2k s :: Blowfish) zeroIV
 string2sencrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2decrypt"
 
 string2decrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> Decrypt
@@ -508,12 +535,20 @@ string2decrypt OpenPGP.AES256 s2k s = pgpUnCFB (string2key s2k s :: AES256)
 string2decrypt OpenPGP.Blowfish s2k s = pgpUnCFB (string2key s2k s :: Blowfish)
 string2decrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2decrypt"
 
-string2sdecrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> LZ.ByteString -> LZ.ByteString
-string2sdecrypt OpenPGP.AES128 s2k s = simpleUnCFB (string2key s2k s :: AES128)
-string2sdecrypt OpenPGP.AES192 s2k s = simpleUnCFB (string2key s2k s :: AES192)
-string2sdecrypt OpenPGP.AES256 s2k s = simpleUnCFB (string2key s2k s :: AES256)
-string2sdecrypt OpenPGP.Blowfish s2k s = simpleUnCFB (string2key s2k s :: Blowfish)
+string2sdecrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> Enciphered -> LZ.ByteString
+string2sdecrypt OpenPGP.AES128 s2k s = withIV $ simpleUnCFB (string2key s2k s :: AES128)
+string2sdecrypt OpenPGP.AES192 s2k s = withIV $ simpleUnCFB (string2key s2k s :: AES192)
+string2sdecrypt OpenPGP.AES256 s2k s = withIV $ simpleUnCFB (string2key s2k s :: AES256)
+string2sdecrypt OpenPGP.Blowfish s2k s = withIV $ simpleUnCFB (string2key s2k s :: Blowfish)
 string2sdecrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2sdecrypt"
+
+data Enciphered = EncipheredWithIV !LZ.ByteString | EncipheredZeroIV !LZ.ByteString
+
+withIV :: (BlockCipher k) => (IV k -> LZ.ByteString -> LZ.ByteString) -> Enciphered -> LZ.ByteString
+withIV f (EncipheredWithIV s) = f iv $ LZ.drop (fromIntegral $ BS.length $ Serialize.encode iv) s
+	where
+	iv = let Right x = Serialize.decode (toStrictBS s) in x
+withIV f (EncipheredZeroIV s) = f zeroIV s
 
 string2key :: (BlockCipher k) => OpenPGP.S2K -> LZ.ByteString -> k
 string2key s2k s = k
