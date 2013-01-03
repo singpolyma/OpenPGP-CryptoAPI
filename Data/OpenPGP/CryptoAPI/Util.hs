@@ -9,8 +9,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LZ
 import qualified Data.OpenPGP as OpenPGP
 
-allOf :: [a -> Bool] -> a -> Bool
-allOf xs = and . (xs <*>) . pure
+swing :: (((a -> b) -> b) -> c -> d) -> c -> a -> d
+swing f c a = f ($ a) c
 
 hush :: Either a b -> Maybe b
 hush (Left _) = Nothing

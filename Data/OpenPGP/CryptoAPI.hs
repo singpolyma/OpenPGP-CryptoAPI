@@ -158,7 +158,7 @@ secretKeys (OpenPGP.Message keys) =
 	where
 	dsa = secrets OpenPGP.DSA
 	rsa = secrets OpenPGP.RSA
-	secrets algo = filter (allOf [isSecretKey, keyAlgorithmIs algo]) keys
+	secrets algo = filter (swing all [isSecretKey, keyAlgorithmIs algo]) keys
 
 privateRSAkey :: OpenPGP.Packet -> RSA.PrivateKey
 privateRSAkey k =
