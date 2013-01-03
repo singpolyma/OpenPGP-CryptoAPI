@@ -352,8 +352,7 @@ s2kHashAlgorithm = v
 	where
 	v = Tagged $ case () of
 		_ | ksize <= 160 -> OpenPGP.SHA1
-		  | ksize <= 224 -> OpenPGP.SHA224
-		  | ksize <= 384 -> OpenPGP.SHA384
+		  | ksize <= 256 -> OpenPGP.SHA256
 		  | otherwise    -> OpenPGP.SHA512
 	ksize = keyLength `tagOfTag` v
 
