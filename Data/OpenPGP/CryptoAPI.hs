@@ -9,10 +9,10 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT)
-import Data.Binary
+import Data.Binary (encode, decode, get, Word16, Word32)
 import Crypto.Classes hiding (hash,sign,verify,encode)
 import Data.Tagged (untag, asTaggedTypeOf, Tagged(..))
-import Crypto.Modes
+import Crypto.Modes (cfb, unCfb, IV, zeroIV)
 import Crypto.Random (CryptoRandomGen, GenError(GenErrorOther), genBytes)
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
@@ -141,7 +141,7 @@ rsaEncrypt pk bs = StateT (\g ->
 	)
 
 integerBytesize :: Integer -> Int
-integerBytesize i = length (LZ.unpack $ encode (OpenPGP.MPI i)) - 2
+integerBytesize i = fromIntegral $ LZ.length (encode (OpenPGP.MPI i)) - 2
 
 keyParam :: Char -> OpenPGP.Packet -> Integer
 keyParam c k = fromJustMPI $ lookup c (OpenPGP.key k)
@@ -198,10 +198,11 @@ fingerprint p
 	material = LZ.concat $ OpenPGP.fingerprint_material p
 
 -- | Verify a message signature
-verify :: OpenPGP.Message    -- ^ Keys that may have made the signature
-          -> OpenPGP.Message -- ^ LiteralData message to verify
-          -> Int             -- ^ Index of signature to verify (0th, 1st, etc)
-          -> Bool
+verify ::
+	OpenPGP.Message    -- ^ Keys that may have made the signature
+	-> OpenPGP.Message -- ^ LiteralData message to verify
+	-> Int             -- ^ Index of signature to verify (0th, 1st, etc)
+	-> Bool
 verify keys message sigidx =
 	case OpenPGP.key_algorithm sig of
 		OpenPGP.DSA -> dsaVerify
@@ -231,20 +232,14 @@ verify keys message sigidx =
 
 -- | Sign data or key/userID pair.
 sign :: (CryptoRandomGen g) =>
-        OpenPGP.Message    -- ^ SecretKeys, one of which will be used
-        -> OpenPGP.Message -- ^ Message containing data or key to sign, and optional signature packet
-        -> OpenPGP.HashAlgorithm -- ^ HashAlgorithm to use in signature
-        -> String  -- ^ KeyID of key to choose or @[]@ for first
-        -> Integer -- ^ Timestamp for signature (unless sig supplied)
-        -> g       -- ^ Random number generator
-        -> OpenPGP.Packet
-sign keys message hsh keyid timestamp g =
-	-- WARNING: this style of update is unsafe on most fields
-	-- it is safe on signature and hash_head, though
-	sig {
-		OpenPGP.signature = map OpenPGP.MPI final,
-		OpenPGP.hash_head = 0 -- TODO
-	}
+	OpenPGP.Message          -- ^ SecretKeys, one of which will be used
+	-> OpenPGP.Message       -- ^ Message containing data or key to sign, and optional signature packet
+	-> OpenPGP.HashAlgorithm -- ^ HashAlgorithm to use in signature
+	-> String                -- ^ KeyID of key to choose or @[]@ for first
+	-> Integer               -- ^ Timestamp for signature (unless sig supplied)
+	-> g                     -- ^ Random number generator
+	-> OpenPGP.Packet
+sign keys message hsh keyid timestamp g = sig
 	where
 	final   = case OpenPGP.key_algorithm sig of
 		OpenPGP.DSA -> [dsaR, dsaS]
@@ -269,8 +264,7 @@ sign keys message hsh keyid timestamp g =
 	toNum   = BS.foldl (\a b -> a `shiftL` 8 .|. fromIntegral b) 0
 
 	-- Either a SignaturePacket was found, or we need to make one
-	findSigOrDefault (Just s) =
-		OpenPGP.signaturePacket
+	findSigOrDefault (Just s) = OpenPGP.signaturePacket
 		(OpenPGP.version s)
 		(OpenPGP.signature_type s)
 		(OpenPGP.key_algorithm k) -- force to algo of key
@@ -278,7 +272,7 @@ sign keys message hsh keyid timestamp g =
 		(OpenPGP.hashed_subpackets s)
 		(OpenPGP.unhashed_subpackets s)
 		(OpenPGP.hash_head s)
-		(OpenPGP.signature s)
+		(map OpenPGP.MPI final)
 	findSigOrDefault Nothing  = OpenPGP.signaturePacket
 		4
 		defaultStype
@@ -287,27 +281,24 @@ sign keys message hsh keyid timestamp g =
 		([
 			-- Do we really need to pass in timestamp just for the default?
 			OpenPGP.SignatureCreationTimePacket $ fromIntegral timestamp,
-			OpenPGP.IssuerPacket keyid'
+			OpenPGP.IssuerPacket $ fingerprint k
 		] ++ (case signOver of
 			OpenPGP.LiteralDataPacket {} -> []
 			_ -> [] -- TODO: OpenPGP.KeyFlagsPacket [0x01, 0x02]
 		))
 		[]
-		undefined
-		undefined
+		0 -- TODO
+		(map OpenPGP.MPI final)
 
-	keyid'  = reverse $ take 16 $ reverse $ fingerprint k
 	Just k  = find_key keys keyid
-
 	Just (OpenPGP.UserIDPacket firstUserID) = find isUserID m
-
-	defaultStype = case signOver of
-		OpenPGP.LiteralDataPacket {OpenPGP.format = f} ->
-			if f == 'b' then 0x00 else 0x01
-		_ -> 0x13
-
 	Just signOver = find isSignable m
 	OpenPGP.Message m = message
+
+	defaultStype = case signOver of
+		OpenPGP.LiteralDataPacket {OpenPGP.format = 'b'} -> 0x00
+		OpenPGP.LiteralDataPacket {}                     -> 0x01
+		_                                                -> 0x13
 
 encrypt :: (CryptoRandomGen g) =>
 	[BS.ByteString]               -- ^ Passphrases, all of which will be used
@@ -423,6 +414,7 @@ decryptSecretKey pass k@(OpenPGP.SecretKeyPacket {
 		| OpenPGP.s2k_useage k == 254 = (20, fst . hash OpenPGP.SHA1)
 		| otherwise = (2, Serialize.encode . checksum . toStrictBS)
 	decd = string2sdecrypt salgo s2k (toLazyBS pass) (EncipheredWithIV encd)
+decryptSecretKey _ _ = Nothing
 
 -- | Decrypt an OpenPGP message using secret key
 decryptAsymmetric ::

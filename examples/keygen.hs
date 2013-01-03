@@ -31,7 +31,6 @@ main = do
 		OpenPGP.s2k = OpenPGP.S2K 100 LZ.empty, -- Bogus, unused S2K
 		OpenPGP.symmetric_algorithm = OpenPGP.Unencrypted,
 		OpenPGP.encrypted_data = LZ.empty,
-		OpenPGP.private_hash = Nothing,
 		OpenPGP.is_subkey = False}
 
 	let userID = OpenPGP.UserIDPacket "Test <test@example.com>"
