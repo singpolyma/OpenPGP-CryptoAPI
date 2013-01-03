@@ -7,8 +7,8 @@ import qualified Data.OpenPGP.CryptoAPI as OpenPGP
 
 main :: IO ()
 main = do
-	argv <- getArgs
-	keys <- decodeFile (argv !! 0)
-	message <- decodeFile (argv !! 1)
+	[keyPath, messagePath] <- getArgs
+	keys <- decodeFile keyPath
+	message <- decodeFile messagePath
 	-- Just verify first signature
 	print $ OpenPGP.verify keys message 0

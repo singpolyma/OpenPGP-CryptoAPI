@@ -11,11 +11,11 @@ import qualified Data.ByteString.Lazy.UTF8 as LZ
 
 main :: IO ()
 main = do
-	argv <- getArgs
+	[path] <- getArgs
 	time <- getClockTime
 	rng <- newGenIO :: IO SystemRandom
 	let TOD t _ = time
-	keys <- decodeFile (argv !! 0)
+	keys <- decodeFile path
 	let dataPacket = OpenPGP.LiteralDataPacket 'u' "t.txt"
 			(fromIntegral t) (LZ.fromString "This is a message.")
 	let message = OpenPGP.Message [

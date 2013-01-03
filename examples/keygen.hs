@@ -1,18 +1,16 @@
-import System.Time (getClockTime, ClockTime(..))
-import qualified Data.ByteString.Lazy as LZ
-
-import Data.Binary
-import Crypto.Random
 import Control.Arrow (second)
+import Data.Binary (encode)
+import Crypto.Random (newGenIO, SystemRandom)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Crypto.Cipher.RSA as RSA
+import qualified Data.ByteString.Lazy as LZ
 
 import qualified Data.OpenPGP as OpenPGP
 import qualified Data.OpenPGP.CryptoAPI as OpenPGP
 
 main :: IO ()
 main = do
-	time <- getClockTime
-	let TOD t _ = time
+	time <- fmap (floor . realToFrac) getPOSIXTime
 
 	rng <- newGenIO :: IO SystemRandom
 	-- RSA.generate size in *bytes*
@@ -20,7 +18,7 @@ main = do
 
 	let secretKey = OpenPGP.SecretKeyPacket {
 		OpenPGP.version = 4,
-		OpenPGP.timestamp = fromIntegral t,
+		OpenPGP.timestamp = time,
 		OpenPGP.key_algorithm = OpenPGP.RSA,
 		-- OpenPGP p/q are inverted from Crypto.Cipher.RSA
 		OpenPGP.key = map (second OpenPGP.MPI)
@@ -37,6 +35,6 @@ main = do
 	let message = OpenPGP.Message [secretKey, userID]
 
 	let message' = OpenPGP.Message [secretKey, userID,
-		OpenPGP.sign message message OpenPGP.SHA256 [] (fromIntegral t) g]
+		OpenPGP.sign message message OpenPGP.SHA256 [] (fromIntegral time) g]
 
 	LZ.putStr $ encode message'
