@@ -203,7 +203,7 @@ fingerprint p
 -- | Verify a message signature
 verify ::
 	OpenPGP.Message          -- ^ Keys that may have made the signature
-	-> OpenPGP.SignatureOver -- ^ LiteralData message to verify
+	-> OpenPGP.SignatureOver -- ^ Signatures to verify
 	-> OpenPGP.SignatureOver -- ^ Will only contain signatures that passed
 verify keys over =
 	over {OpenPGP.signatures_over = mapMaybe (uncurry $ verifyOne keys) sigs}
@@ -237,7 +237,7 @@ sign :: (CryptoRandomGen g) =>
 	OpenPGP.Message          -- ^ SecretKeys, one of which will be used
 	-> OpenPGP.SignatureOver -- ^ Data to sign, and optional signature packet
 	-> OpenPGP.HashAlgorithm -- ^ HashAlgorithm to use in signature
-	-> String                -- ^ KeyID of key to choose or @[]@ for first
+	-> String                -- ^ KeyID of key to choose
 	-> Integer               -- ^ Timestamp for signature (unless sig supplied)
 	-> g                     -- ^ Random number generator
 	-> (OpenPGP.SignatureOver, g)
@@ -306,7 +306,7 @@ encrypt :: (CryptoRandomGen g) =>
 	[BS.ByteString]               -- ^ Passphrases, all of which will be used
 	-> OpenPGP.Message            -- ^ PublicKeys, all of which will be used
 	-> OpenPGP.SymmetricAlgorithm -- ^ Cipher to use
-	-> OpenPGP.Message            -- ^ The Message to encrypt
+	-> OpenPGP.Message            -- ^ The 'OpenPGP.Message' to encrypt
 	-> g                          -- ^ Random number generator
 	-> Either GenError (OpenPGP.Message, g)
 encrypt pass (OpenPGP.Message keys) algo msg = runStateT $ do
@@ -421,7 +421,7 @@ decryptSecretKey _ _ = Nothing
 -- | Decrypt an OpenPGP message using secret key
 decryptAsymmetric ::
 	OpenPGP.Message    -- ^ SecretKeys, one of which will be used
-	-> OpenPGP.Message -- ^ An OpenPGP Message containing AssymetricSessionKey and EncryptedData
+	-> OpenPGP.Message -- ^ A 'OpenPGP.Message' containing AsymmetricSessionKey and EncryptedData
 	-> Maybe OpenPGP.Message
 decryptAsymmetric keys msg@(OpenPGP.Message pkts) = do
 	(_, d) <- getAsymmetricSessionKey keys msg
@@ -431,7 +431,7 @@ decryptAsymmetric keys msg@(OpenPGP.Message pkts) = do
 -- | Decrypt an OpenPGP message using passphrase
 decryptSymmetric ::
 	[BS.ByteString]    -- ^ Passphrases, one of which will be used
-	-> OpenPGP.Message -- ^ An OpenPGP Message containing AssymetricSessionKey and EncryptedData
+	-> OpenPGP.Message -- ^ A 'OpenPGP.Message' containing SymetricSessionKey and EncryptedData
 	-> Maybe OpenPGP.Message
 decryptSymmetric pass msg@(OpenPGP.Message pkts) = do
 	let ds = map snd $ getSymmetricSessionKey pass msg

@@ -1,5 +1,5 @@
 name:            openpgp-crypto-api
-version:         0.4
+version:         0.6
 cabal-version:   >= 1.8
 license:         OtherLicense
 license-file:    COPYING
@@ -11,12 +11,13 @@ stability:       experimental
 tested-with:     GHC == 7.0.3
 synopsis:        Implement cryptography for OpenPGP using crypto-api compatible libraries
 homepage:        http://github.com/singpolyma/OpenPGP-CryptoAPI
-bug-reports:     http://github.com/singpolyma/OpenPGP-Haskell/issues
+bug-reports:     http://github.com/singpolyma/OpenPGP-CryptoAPI/issues
 build-type:      Simple
 description:
         This is a wrapper around <http://hackage.haskell.org/package/crypto-api>
         and related libraries that currently does fingerprint generation, signature
-        generation, and signature verification (for RSA and DSA keys).
+        generation, signature verification, and both asymmetric and symmetric
+        encryption and decryption.
         .
         It is indended to be used with <http://hackage.haskell.org/package/openpgp>
         .
@@ -31,14 +32,21 @@ extra-source-files:
         tests/data/000016-006.public_key,
         tests/data/000027-006.public_key,
         tests/data/000035-006.public_key,
-        tests/data/uncompressed-ops-dsa.gpg,
-        tests/data/uncompressed-ops-dsa-sha384.txt.gpg,
-        tests/data/uncompressed-ops-rsa.gpg,
+        tests/data/compressedsig-bzip2.gpg,
         tests/data/compressedsig.gpg,
         tests/data/compressedsig-zlib.gpg,
-        tests/data/compressedsig-bzip2.gpg,
-        tests/data/hello.gpg
-        tests/data/helloKey.gpg
+        tests/data/encryptedSecretKey.gpg,
+        tests/data/hello.gpg,
+        tests/data/helloKey.gpg,
+        tests/data/pubring.gpg,
+        tests/data/secring.gpg,
+        tests/data/symmetric-aes.gpg,
+        tests/data/symmetric-blowfish.gpg,
+        tests/data/symmetric-no-mdc.gpg,
+        tests/data/symmetric-with-session-key.gpg,
+        tests/data/uncompressed-ops-dsa.gpg,
+        tests/data/uncompressed-ops-dsa-sha384.txt.gpg,
+        tests/data/uncompressed-ops-rsa.gpg
 
 library
         exposed-modules:
@@ -46,13 +54,14 @@ library
 
         other-modules:
                 Data.OpenPGP.CryptoAPI.Util
+                Data.OpenPGP.CryptoAPI.Blowfish128
 
         build-depends:
                 base == 4.*,
                 transformers,
                 bytestring,
                 binary >= 0.6.4.0,
-                openpgp,
+                openpgp >= 0.6,
                 crypto-api >= 0.9,
                 tagged,
                 cryptocipher >= 0.3.6,
@@ -68,7 +77,7 @@ test-suite tests
                 transformers,
                 bytestring,
                 binary >= 0.6.4.0,
-                openpgp,
+                openpgp >= 0.6,
                 crypto-api >= 0.9,
                 tagged,
                 cryptocipher >= 0.3.6,

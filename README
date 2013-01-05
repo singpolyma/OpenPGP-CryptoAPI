@@ -1,6 +1,7 @@
 This is a wrapper around <http://hackage.haskell.org/package/crypto-api>
 and related libraries that currently does fingerprint generation, signature
-generation, and signature verification (for RSA and DSA keys).
+generation, signature verification, and both asymmetric and symmetric
+encryption and decryption.
 
 It is indended to be used with <http://hackage.haskell.org/package/openpgp>
 
