@@ -116,8 +116,9 @@ tests secring oneKey rng =
 		],
 		testGroup "Decryption" [
 			testCase "decrypt hello" testDecryptHello,
-			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric.gpg"),
-			testCase "decrypt PGP" (testDecryptSymmetric "hello" "PGP\n" "symmetric2.gpg"),
+			testCase "decrypt AES" (testDecryptSymmetric "hello" "PGP\n" "symmetric-aes.gpg"),
+			testCase "decrypt session key" (testDecryptSymmetric "hello" "PGP\n" "symmetric-with-session-key.gpg"),
+			testCase "decrypt Blowfish" (testDecryptSymmetric "hello" "PGP\n" "symmetric-blowfish.gpg"),
 			testCase "decrypt secret key" (testDecryptSecretKey "hello" "encryptedSecretKey.gpg")
 		],
 		testGroup "Encryption" [

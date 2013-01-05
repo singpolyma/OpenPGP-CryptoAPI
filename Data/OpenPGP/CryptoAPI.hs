@@ -22,7 +22,6 @@ import Crypto.Hash.SHA384 (SHA384)
 import Crypto.Hash.SHA512 (SHA512)
 import Crypto.Hash.SHA224 (SHA224)
 import Crypto.Cipher.AES (AES128,AES192,AES256)
-import Crypto.Cipher.Blowfish (Blowfish)
 import qualified Data.Serialize as Serialize
 import qualified Crypto.Cipher.RSA as RSA
 import qualified Crypto.Cipher.DSA as DSA
@@ -32,6 +31,7 @@ import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString)
 
 import qualified Data.OpenPGP as OpenPGP
 import Data.OpenPGP.CryptoAPI.Util
+import Data.OpenPGP.CryptoAPI.Blowfish128
 
 -- | An encryption routine
 type Encrypt g = (LZ.ByteString -> g -> (LZ.ByteString, g))
@@ -343,7 +343,7 @@ s2kHashAlgorithmFor :: OpenPGP.SymmetricAlgorithm -> OpenPGP.HashAlgorithm
 s2kHashAlgorithmFor OpenPGP.AES128 = s2kHashAlgorithm `for` (undefined :: AES128)
 s2kHashAlgorithmFor OpenPGP.AES192 = s2kHashAlgorithm `for` (undefined :: AES192)
 s2kHashAlgorithmFor OpenPGP.AES256 = s2kHashAlgorithm `for` (undefined :: AES256)
-s2kHashAlgorithmFor OpenPGP.Blowfish = s2kHashAlgorithm `for` (undefined :: Blowfish)
+s2kHashAlgorithmFor OpenPGP.Blowfish = s2kHashAlgorithm `for` (undefined :: Blowfish128)
 s2kHashAlgorithmFor algo = error $ "Unsupported SymmetricAlgorithm " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.s2kHashAlgorithmFor"
 
 s2kHashAlgorithm :: (BlockCipher k) => Tagged k OpenPGP.HashAlgorithm
@@ -373,7 +373,7 @@ sessionFor algo@OpenPGP.AES256 msg = do
 	return (sessionKeyEncode sk algo, encP)
 sessionFor algo@OpenPGP.Blowfish msg = do
 	sk <- StateT buildKeyGen
-	encP <- newSession (sk :: Blowfish) msg
+	encP <- newSession (sk :: Blowfish128) msg
 	return (sessionKeyEncode sk algo, encP)
 sessionFor algo _ = lift $ Left $ GenErrorOther $ "Unsupported cipher: " ++ show algo
 
@@ -517,28 +517,28 @@ decodeSymKey :: OpenPGP.SymmetricAlgorithm -> BS.ByteString -> Maybe Decrypt
 decodeSymKey OpenPGP.AES128 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES128)) <$> sDecode k
 decodeSymKey OpenPGP.AES192 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES192)) <$> sDecode k
 decodeSymKey OpenPGP.AES256 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES256)) <$> sDecode k
-decodeSymKey OpenPGP.Blowfish k = pgpUnCFB <$> (`asTypeOf` (undefined :: Blowfish)) <$> sDecode k
+decodeSymKey OpenPGP.Blowfish k = pgpUnCFB <$> (`asTypeOf` (undefined :: Blowfish128)) <$> sDecode k
 decodeSymKey _ _ = Nothing
 
 string2sencrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> LZ.ByteString -> LZ.ByteString
 string2sencrypt OpenPGP.AES128 s2k s = simpleCFB (string2key s2k s :: AES128) zeroIV
 string2sencrypt OpenPGP.AES192 s2k s = simpleCFB (string2key s2k s :: AES192) zeroIV
 string2sencrypt OpenPGP.AES256 s2k s = simpleCFB (string2key s2k s :: AES256) zeroIV
-string2sencrypt OpenPGP.Blowfish s2k s = simpleCFB (string2key s2k s :: Blowfish) zeroIV
+string2sencrypt OpenPGP.Blowfish s2k s = simpleCFB (string2key s2k s :: Blowfish128) zeroIV
 string2sencrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2decrypt"
 
 string2decrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> Decrypt
 string2decrypt OpenPGP.AES128 s2k s = pgpUnCFB (string2key s2k s :: AES128)
 string2decrypt OpenPGP.AES192 s2k s = pgpUnCFB (string2key s2k s :: AES192)
 string2decrypt OpenPGP.AES256 s2k s = pgpUnCFB (string2key s2k s :: AES256)
-string2decrypt OpenPGP.Blowfish s2k s = pgpUnCFB (string2key s2k s :: Blowfish)
+string2decrypt OpenPGP.Blowfish s2k s = pgpUnCFB (string2key s2k s :: Blowfish128)
 string2decrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2decrypt"
 
 string2sdecrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> Enciphered -> LZ.ByteString
 string2sdecrypt OpenPGP.AES128 s2k s = withIV $ simpleUnCFB (string2key s2k s :: AES128)
 string2sdecrypt OpenPGP.AES192 s2k s = withIV $ simpleUnCFB (string2key s2k s :: AES192)
 string2sdecrypt OpenPGP.AES256 s2k s = withIV $ simpleUnCFB (string2key s2k s :: AES256)
-string2sdecrypt OpenPGP.Blowfish s2k s = withIV $ simpleUnCFB (string2key s2k s :: Blowfish)
+string2sdecrypt OpenPGP.Blowfish s2k s = withIV $ simpleUnCFB (string2key s2k s :: Blowfish128)
 string2sdecrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2sdecrypt"
 
 data Enciphered = EncipheredWithIV !LZ.ByteString | EncipheredZeroIV !LZ.ByteString
