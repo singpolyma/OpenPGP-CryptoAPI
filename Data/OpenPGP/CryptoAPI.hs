@@ -9,7 +9,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT)
-import Data.Binary (encode, decode, get, Word16, Word32)
+import Data.Binary (encode, decode, get, Word16)
 import Crypto.Classes hiding (hash,sign,verify,encode)
 import Data.Tagged (untag, asTaggedTypeOf, Tagged(..))
 import Crypto.Modes (cfb, unCfb, IV, zeroIV)
@@ -27,7 +27,6 @@ import qualified Crypto.Cipher.RSA as RSA
 import qualified Crypto.Cipher.DSA as DSA
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LZ
-import qualified Data.ByteString.Lazy.UTF8 as LZ (fromString)
 
 import qualified Data.OpenPGP as OpenPGP
 import Data.OpenPGP.CryptoAPI.Util
@@ -203,68 +202,62 @@ fingerprint p
 
 -- | Verify a message signature
 verify ::
-	OpenPGP.Message    -- ^ Keys that may have made the signature
-	-> OpenPGP.Message -- ^ LiteralData message to verify
-	-> Int             -- ^ Index of signature to verify (0th, 1st, etc)
-	-> Bool
-verify keys message sigidx =
+	OpenPGP.Message          -- ^ Keys that may have made the signature
+	-> OpenPGP.SignatureOver -- ^ LiteralData message to verify
+	-> OpenPGP.SignatureOver -- ^ Will only contain signatures that passed
+verify keys over =
+	over {OpenPGP.signatures_over = mapMaybe (uncurry $ verifyOne keys) sigs}
+	where
+	sigs = map (\s -> (s, toStrictBS $ encode over `LZ.append` OpenPGP.trailer s))
+		(OpenPGP.signatures_over over)
+
+verifyOne :: OpenPGP.Message -> OpenPGP.Packet -> BS.ByteString -> Maybe OpenPGP.Packet
+verifyOne keys sig over = fmap (const sig) $ maybeKey >>=
 	case OpenPGP.key_algorithm sig of
 		OpenPGP.DSA -> dsaVerify
 		alg | alg `elem` [OpenPGP.RSA,OpenPGP.RSA_S] -> rsaVerify
-		    | otherwise -> error ("Unsupported key algorithm " ++ show alg)
+		    | otherwise -> const Nothing
 	where
-	dsaVerify = let k' = dsaKey k in
-		case DSA.verify dsaSig (dsaTruncate k' . bhash) k' signature_over of
-			Left _ -> False
-			Right v -> v
-	rsaVerify =
-		case RSA.verify bhash padding (rsaKey k) signature_over rsaSig of
-			Left _ -> False
-			Right v -> v
-	rsaSig = toStrictBS $ LZ.drop 2 $ encode (head $ OpenPGP.signature sig)
+	dsaVerify k = let k' = dsaKey k in
+		hush $ DSA.verify dsaSig (dsaTruncate k' . bhash) k' over
+	rsaVerify k = hush $ RSA.verify bhash padding (rsaKey k) over rsaSig
+	[rsaSig] = map (toStrictBS . LZ.drop 2 . encode) (OpenPGP.signature sig)
 	dsaSig = let [OpenPGP.MPI r, OpenPGP.MPI s] = OpenPGP.signature sig in
 		(r, s)
 	dsaTruncate (DSA.PublicKey (_,_,q) _) = BS.take (integerBytesize q)
 	bhash = fst . hash hash_algo . toLazyBS
 	padding = emsa_pkcs1_v1_5_hash_padding hash_algo
 	hash_algo = OpenPGP.hash_algorithm sig
-	signature_over = toStrictBS $ dta `LZ.append` OpenPGP.trailer sig
-	Just k = OpenPGP.signature_issuer sig >>= find_key keys
-	sig = sigs !! sigidx
-	[OpenPGP.DataSignature (OpenPGP.LiteralDataPacket {OpenPGP.content = dta}) sigs] = OpenPGP.signatures message
+	maybeKey = OpenPGP.signature_issuer sig >>= find_key keys
 
--- | Sign data or key/userID pair.
+-- | Make a signature
+--
+-- In order to set more options on a signature, pass in a signature packet.
 sign :: (CryptoRandomGen g) =>
 	OpenPGP.Message          -- ^ SecretKeys, one of which will be used
-	-> OpenPGP.Message       -- ^ Message containing data or key to sign, and optional signature packet
+	-> OpenPGP.SignatureOver -- ^ Data to sign, and optional signature packet
 	-> OpenPGP.HashAlgorithm -- ^ HashAlgorithm to use in signature
 	-> String                -- ^ KeyID of key to choose or @[]@ for first
 	-> Integer               -- ^ Timestamp for signature (unless sig supplied)
 	-> g                     -- ^ Random number generator
-	-> OpenPGP.Packet
-sign keys message hsh keyid timestamp g = sig
+	-> (OpenPGP.SignatureOver, g)
+sign keys over hsh keyid timestamp g = (over {OpenPGP.signatures_over = [sig]}, g')
 	where
-	final   = case OpenPGP.key_algorithm sig of
-		OpenPGP.DSA -> [dsaR, dsaS]
-		kalgo | kalgo `elem` [OpenPGP.RSA,OpenPGP.RSA_S] -> [toNum rsaFinal]
+	(final, g') = case OpenPGP.key_algorithm sig of
+		OpenPGP.DSA -> ([dsaR, dsaS], dsaG)
+		kalgo | kalgo `elem` [OpenPGP.RSA,OpenPGP.RSA_S] -> ([toNum rsaFinal], g)
 		      | otherwise ->
 			error ("Unsupported key algorithm " ++ show kalgo ++ "in sign")
-	Right ((dsaR,dsaS),_) = let k' = privateDSAkey k in
+	Right ((dsaR,dsaS),dsaG) = let k' = privateDSAkey k in
 		DSA.sign g (dsaTruncate k' . bhash) k' dta
 	Right rsaFinal = RSA.sign bhash padding (privateRSAkey k) dta
 	dsaTruncate (DSA.PrivateKey (_,_,q) _) = BS.take (integerBytesize q)
-	dta     = toStrictBS $ case signOver of {
-		OpenPGP.LiteralDataPacket {OpenPGP.content = c} -> c;
-		_ -> LZ.concat $ OpenPGP.fingerprint_material signOver ++ [
-			LZ.singleton 0xB4,
-			encode (fromIntegral (length firstUserID) :: Word32),
-			LZ.fromString firstUserID
-		]
-	} `LZ.append` OpenPGP.trailer sig
-	sig     = findSigOrDefault (find OpenPGP.isSignaturePacket m)
+	dta     = toStrictBS $ encode over `LZ.append` OpenPGP.trailer sig
+	sig     = findSigOrDefault (listToMaybe $ OpenPGP.signatures_over over)
 	padding = emsa_pkcs1_v1_5_hash_padding hsh
 	bhash   = fst . hash hsh . toLazyBS
 	toNum   = BS.foldl (\a b -> a `shiftL` 8 .|. fromIntegral b) 0
+	Just k  = find_key keys keyid
 
 	-- Either a SignaturePacket was found, or we need to make one
 	findSigOrDefault (Just s) = OpenPGP.signaturePacket
@@ -285,9 +278,8 @@ sign keys message hsh keyid timestamp g = sig
 			-- Do we really need to pass in timestamp just for the default?
 			OpenPGP.SignatureCreationTimePacket $ fromIntegral timestamp,
 			OpenPGP.IssuerPacket $ fingerprint k
-		] ++ (case signOver of
-			OpenPGP.LiteralDataPacket {} -> []
-			_ -> [OpenPGP.KeyFlagsPacket {
+		] ++ (case over of
+			OpenPGP.KeySignature  {} -> [OpenPGP.KeyFlagsPacket {
 					OpenPGP.certify_keys = True,
 					OpenPGP.sign_data = True,
 					OpenPGP.encrypt_communication = False,
@@ -296,20 +288,19 @@ sign keys message hsh keyid timestamp g = sig
 					OpenPGP.authentication = False,
 					OpenPGP.group_key = False
 				}]
+			_ -> []
 		))
 		[]
 		0 -- TODO
 		(map OpenPGP.MPI final)
 
-	Just k  = find_key keys keyid
-	Just (OpenPGP.UserIDPacket firstUserID) = find isUserID m
-	Just signOver = find isSignable m
-	OpenPGP.Message m = message
-
-	defaultStype = case signOver of
-		OpenPGP.LiteralDataPacket {OpenPGP.format = 'b'} -> 0x00
-		OpenPGP.LiteralDataPacket {}                     -> 0x01
-		_                                                -> 0x13
+	defaultStype = case over of
+		OpenPGP.DataSignature ld _
+			| OpenPGP.format ld == 'b'     -> 0x00
+			| otherwise                    -> 0x01
+		OpenPGP.KeySignature {}           -> 0x1F
+		OpenPGP.SubkeySignature {}        -> 0x18
+		OpenPGP.CertificationSignature {} -> 0x13
 
 encrypt :: (CryptoRandomGen g) =>
 	[BS.ByteString]               -- ^ Passphrases, all of which will be used

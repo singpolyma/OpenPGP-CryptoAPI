@@ -37,8 +37,15 @@ testVerifyMessage :: FilePath -> FilePath -> Assertion
 testVerifyMessage keyring message = do
 	keys <- fmap decode $ LZ.readFile $ "tests/data/" ++ keyring
 	m <- fmap decode $ LZ.readFile $ "tests/data/" ++ message
-	let verification = OpenPGP.verify keys m 0
-	assertEqual (keyring ++ " for " ++ message) True verification
+	let OpenPGP.DataSignature _ ss =
+		OpenPGP.verify keys (head $ OpenPGP.signatures m)
+	assertEqual (keyring ++ " for " ++ message) 1 (length ss)
+
+testVerifyKey :: FilePath -> Int -> Assertion
+testVerifyKey keyring count = do
+	keys <- fmap decode $ LZ.readFile $ "tests/data/" ++ keyring
+	let out = OpenPGP.verify keys (OpenPGP.signatures keys !! 1)
+	assertEqual keyring count (length $ OpenPGP.signatures_over out)
 
 testDecryptHello :: Assertion
 testDecryptHello = do
@@ -74,9 +81,10 @@ prop_sign_and_verify secring g halgo filename msg = do
 			OpenPGP.timestamp = 12341234,
 			OpenPGP.content = LZ.fromString msg
 		}
-	let sig = OpenPGP.sign secring (OpenPGP.Message [m])
+	let (sig,_) = OpenPGP.sign secring (OpenPGP.DataSignature m [])
 			halgo keyid 12341234 g
-	return $ OpenPGP.verify secring (OpenPGP.Message [sig,m]) 0
+	let OpenPGP.DataSignature _ ss = OpenPGP.verify secring sig
+	return (length ss == 1)
 
 prop_encrypt_and_decrypt :: (CryptoRandomGen g) => OpenPGP.Message -> g -> BS.ByteString -> OpenPGP.SymmetricAlgorithm -> String -> String -> Bool
 prop_encrypt_and_decrypt secring g pass algo filename msg =
@@ -111,8 +119,11 @@ tests secring oneKey rng =
 			testCase "compressedsig-zlib" (testVerifyMessage "pubring.gpg" "compressedsig-zlib.gpg"),
 			testCase "compressedsig-bzip2" (testVerifyMessage "pubring.gpg" "compressedsig-bzip2.gpg")
 		],
+		testGroup "Key verification" [
+			testCase "helloKey" (testVerifyKey "helloKey.gpg" 1)
+		],
 		testGroup "Signing" [
-			testProperty "Crypto signatures verify" (prop_sign_and_verify secring rng)
+			testProperty "Signatures verify" (prop_sign_and_verify secring rng)
 		],
 		testGroup "Decryption" [
 			testCase "decrypt hello" testDecryptHello,

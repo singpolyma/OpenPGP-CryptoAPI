@@ -32,9 +32,10 @@ main = do
 		OpenPGP.is_subkey = False}
 
 	let userID = OpenPGP.UserIDPacket "Test <test@example.com>"
-	let message = OpenPGP.Message [secretKey, userID]
+	let OpenPGP.CertificationSignature _ _ [sig] =
+		fst $ OpenPGP.sign (OpenPGP.Message [secretKey])
+				(OpenPGP.CertificationSignature secretKey userID [])
+				OpenPGP.SHA256 [] (fromIntegral time) g
+	let message = OpenPGP.Message [secretKey, userID, sig]
 
-	let message' = OpenPGP.Message [secretKey, userID,
-		OpenPGP.sign message message OpenPGP.SHA256 [] (fromIntegral time) g]
-
-	LZ.putStr $ encode message'
+	LZ.putStr $ encode message

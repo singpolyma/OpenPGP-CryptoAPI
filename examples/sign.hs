@@ -18,8 +18,8 @@ main = do
 	keys <- decodeFile path
 	let dataPacket = OpenPGP.LiteralDataPacket 'u' "t.txt"
 			(fromIntegral t) (LZ.fromString "This is a message.")
-	let message = OpenPGP.Message [
-		OpenPGP.sign keys (OpenPGP.Message [dataPacket])
-			OpenPGP.SHA256 [] (fromIntegral t) rng,
-		dataPacket]
+	let (OpenPGP.DataSignature _ [sig], _) =
+		OpenPGP.sign keys (OpenPGP.DataSignature dataPacket [])
+			OpenPGP.SHA256 [] (fromIntegral t) rng
+	let message = OpenPGP.Message [sig, dataPacket]
 	LZ.putStr $ encode message
