@@ -36,8 +36,8 @@ import Data.OpenPGP.CryptoAPI.Blowfish128
 -- | An encryption routine
 type Encrypt g = (LZ.ByteString -> g -> (LZ.ByteString, g))
 
--- | A decryption routine
-type Decrypt = (LZ.ByteString -> (LZ.ByteString, LZ.ByteString))
+-- | A decryption routine, Bool=True to do resynchronization
+type Decrypt = (Bool -> LZ.ByteString -> (LZ.ByteString, LZ.ByteString))
 
 -- Start differently-formatted section
 -- | This should be in Crypto.Classes and is based on buildKeyIO
@@ -90,6 +90,9 @@ emsa_pkcs1_v1_5_hash_padding OpenPGP.SHA224 = BS.pack [0x30, 0x31, 0x30, 0x0d, 0
 emsa_pkcs1_v1_5_hash_padding _ =
 	error "Unsupported HashAlgorithm in emsa_pkcs1_v1_5_hash_padding."
 
+blockBytes :: (BlockCipher k, Num n) => k -> n
+blockBytes k = fromIntegral $ blockSizeBytes `for` k
+
 pgpCFBPrefix :: (BlockCipher k, CryptoRandomGen g) => k -> g -> (LZ.ByteString, g)
 pgpCFBPrefix k g =
 	(toLazyBS $ str `BS.append` BS.reverse (BS.take 2 $ BS.reverse str), g')
@@ -106,9 +109,11 @@ simpleCFB :: (BlockCipher k) => k -> IV k -> LZ.ByteString -> LZ.ByteString
 simpleCFB k iv = padThenUnpad k (fst . cfb k iv)
 
 pgpUnCFB :: (BlockCipher k) => k -> Decrypt
-pgpUnCFB k = LZ.splitAt (2 + block) . simpleUnCFB k zeroIV
+pgpUnCFB k False s = LZ.splitAt (2 + blockBytes k) $ simpleUnCFB k zeroIV s
+pgpUnCFB k True s = (simpleUnCFB k zeroIV prefix, simpleUnCFB k iv content)
 	where
-	block = fromIntegral $ blockSizeBytes `for` k
+	Just iv = sDecode $ toStrictBS $ LZ.drop 2 prefix
+	(prefix, content) = LZ.splitAt (2 + blockBytes k) s
 
 simpleUnCFB :: (BlockCipher k) => k -> IV k -> LZ.ByteString -> LZ.ByteString
 simpleUnCFB k iv = padThenUnpad k (fst . unCfb k iv)
@@ -118,8 +123,7 @@ padThenUnpad k f s = dropPadEnd (f padded)
 	where
 	dropPadEnd s = LZ.take (LZ.length s - padAmount) s
 	padded = s `LZ.append` LZ.replicate padAmount 0
-	padAmount = block - (LZ.length s `mod` block)
-	block = fromIntegral $ blockSizeBytes `for` k
+	padAmount = blockBytes k - (LZ.length s `mod` blockBytes k)
 
 addBitLen :: LZ.ByteString -> LZ.ByteString
 addBitLen bytes = encode (bitLen bytes :: Word16) `LZ.append` bytes
@@ -452,10 +456,11 @@ decryptPacket d (OpenPGP.EncryptedDataPacket {
 	   | otherwise = Nothing
 	where
 	(msg,mdc) = LZ.splitAt (LZ.length content - 22) content
-	(prefix, content) = d encd
-decryptPacket _ (OpenPGP.EncryptedDataPacket {
-		OpenPGP.version = 0
-	}) = error "TODO: old-style encryption with no MDC in Data.OpenPGP.CryptoAPI.decryptPacket"
+	(prefix, content) = d False encd
+decryptPacket d (OpenPGP.EncryptedDataPacket {
+		OpenPGP.version = 0,
+		OpenPGP.encrypted_data = encd
+	}) = maybeDecode (snd $ d True encd)
 decryptPacket _ _ = error "Can only decrypt EncryptedDataPacket in Data.OpenPGP.CryptoAPI.decryptPacket"
 
 getSymmetricSessionKey ::
@@ -525,7 +530,7 @@ string2sencrypt OpenPGP.AES128 s2k s = simpleCFB (string2key s2k s :: AES128) ze
 string2sencrypt OpenPGP.AES192 s2k s = simpleCFB (string2key s2k s :: AES192) zeroIV
 string2sencrypt OpenPGP.AES256 s2k s = simpleCFB (string2key s2k s :: AES256) zeroIV
 string2sencrypt OpenPGP.Blowfish s2k s = simpleCFB (string2key s2k s :: Blowfish128) zeroIV
-string2sencrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2decrypt"
+string2sencrypt algo _ _ = error $ "Unsupported symmetric algorithm : " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.string2sencrypt"
 
 string2decrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> Decrypt
 string2decrypt OpenPGP.AES128 s2k s = pgpUnCFB (string2key s2k s :: AES128)
