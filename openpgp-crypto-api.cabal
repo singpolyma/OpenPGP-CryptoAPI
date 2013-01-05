@@ -77,6 +77,7 @@ test-suite tests
                 transformers,
                 bytestring,
                 binary >= 0.6.4.0,
+                utf8-string,
                 openpgp >= 0.6,
                 crypto-api >= 0.9,
                 tagged,
