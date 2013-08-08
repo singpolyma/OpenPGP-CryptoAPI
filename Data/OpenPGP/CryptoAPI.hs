@@ -511,10 +511,10 @@ decodeSessionKey sk
 	(algoByte, rest) = BS.splitAt 1 sk
 
 decodeSymKey :: OpenPGP.SymmetricAlgorithm -> BS.ByteString -> Maybe Decrypt
-decodeSymKey OpenPGP.AES128 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES128)) <$> sDecode k
-decodeSymKey OpenPGP.AES192 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES192)) <$> sDecode k
-decodeSymKey OpenPGP.AES256 k = pgpUnCFB <$> (`asTypeOf` (undefined :: AES256)) <$> sDecode k
-decodeSymKey OpenPGP.Blowfish k = pgpUnCFB <$> (`asTypeOf` (undefined :: Blowfish128)) <$> sDecode k
+decodeSymKey OpenPGP.AES128 k = (pgpUnCFB :: AES128 -> Decrypt) <$> sDecode k
+decodeSymKey OpenPGP.AES192 k = (pgpUnCFB :: AES192 -> Decrypt) <$> sDecode k
+decodeSymKey OpenPGP.AES256 k = (pgpUnCFB :: AES256 -> Decrypt) <$> sDecode k
+decodeSymKey OpenPGP.Blowfish k = (pgpUnCFB :: Blowfish128 -> Decrypt) <$> sDecode k
 decodeSymKey _ _ = Nothing
 
 string2sencrypt :: OpenPGP.SymmetricAlgorithm -> OpenPGP.S2K -> LZ.ByteString -> LZ.ByteString -> LZ.ByteString
