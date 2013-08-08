@@ -81,7 +81,7 @@ test-suite tests
                 openpgp >= 0.6,
                 crypto-api >= 0.9,
                 tagged,
-                cryptocipher >= 0.3.6,
+                cryptocipher >= 0.3.6 && <= 0.3.7,
                 cryptohash,
                 cereal,
                 HUnit,
