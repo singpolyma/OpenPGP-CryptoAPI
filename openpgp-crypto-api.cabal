@@ -1,5 +1,5 @@
 name:            openpgp-crypto-api
-version:         0.6.1
+version:         0.6.2
 cabal-version:   >= 1.8
 license:         OtherLicense
 license-file:    COPYING
@@ -62,10 +62,10 @@ library
                 bytestring,
                 binary >= 0.6.4.0,
                 openpgp >= 0.6,
-                crypto-api >= 0.9,
+                crypto-api >= 0.11,
                 tagged,
                 cryptocipher >= 0.3.6 && <= 0.3.7,
-                cryptohash,
+                cryptohash <= 0.9.1,
                 cereal
 
 test-suite tests
@@ -79,10 +79,10 @@ test-suite tests
                 binary >= 0.6.4.0,
                 utf8-string,
                 openpgp >= 0.6,
-                crypto-api >= 0.9,
+                crypto-api >= 0.11,
                 tagged,
                 cryptocipher >= 0.3.6 && <= 0.3.7,
-                cryptohash,
+                cryptohash <= 0.9.1,
                 cereal,
                 HUnit,
                 QuickCheck >= 2.4.1.1,
