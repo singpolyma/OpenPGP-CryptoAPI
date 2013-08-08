@@ -349,10 +349,7 @@ s2kHashAlgorithm = v
 		_ | ksize <= 160 -> OpenPGP.SHA1
 		  | ksize <= 256 -> OpenPGP.SHA256
 		  | otherwise    -> OpenPGP.SHA512
-	ksize = keyLength `tagOfTag` v
-
-tagOfTag :: Tagged a c -> Tagged a b -> c
-tagOfTag a b = a `for` (undefined `asTaggedTypeOf` b)
+	ksize = untag $ const <$> keyLength <*> v
 
 sessionFor :: (CryptoRandomGen g) => OpenPGP.SymmetricAlgorithm -> OpenPGP.Message -> StateT g (Either GenError) (LZ.ByteString, OpenPGP.Packet)
 sessionFor algo@OpenPGP.AES128 msg = do
