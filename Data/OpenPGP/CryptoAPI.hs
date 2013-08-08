@@ -336,10 +336,14 @@ encryptSessionKeySymmetric sk salgo pass = do
 		(StateT $ genBytes 8) <*> pure 65536
 
 s2kHashAlgorithmFor :: OpenPGP.SymmetricAlgorithm -> OpenPGP.HashAlgorithm
-s2kHashAlgorithmFor OpenPGP.AES128 = s2kHashAlgorithm `for` (undefined :: AES128)
-s2kHashAlgorithmFor OpenPGP.AES192 = s2kHashAlgorithm `for` (undefined :: AES192)
-s2kHashAlgorithmFor OpenPGP.AES256 = s2kHashAlgorithm `for` (undefined :: AES256)
-s2kHashAlgorithmFor OpenPGP.Blowfish = s2kHashAlgorithm `for` (undefined :: Blowfish128)
+s2kHashAlgorithmFor OpenPGP.AES128 =
+	untag (s2kHashAlgorithm :: Tagged AES128 OpenPGP.HashAlgorithm)
+s2kHashAlgorithmFor OpenPGP.AES192 =
+	untag (s2kHashAlgorithm :: Tagged AES192 OpenPGP.HashAlgorithm)
+s2kHashAlgorithmFor OpenPGP.AES256 =
+	untag (s2kHashAlgorithm :: Tagged AES256 OpenPGP.HashAlgorithm)
+s2kHashAlgorithmFor OpenPGP.Blowfish =
+	untag (s2kHashAlgorithm :: Tagged Blowfish128 OpenPGP.HashAlgorithm)
 s2kHashAlgorithmFor algo = error $ "Unsupported SymmetricAlgorithm " ++ show algo ++ " in Data.OpenPGP.CryptoAPI.s2kHashAlgorithmFor"
 
 s2kHashAlgorithm :: (BlockCipher k) => Tagged k OpenPGP.HashAlgorithm
