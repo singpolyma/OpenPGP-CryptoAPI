@@ -10,7 +10,7 @@ import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT)
 import Data.Binary (encode, decode, get, Word16)
-import Crypto.Classes hiding (cfb,unCfb,hash,sign,verify,encode)
+import Crypto.Classes hiding (cfb,unCfb,sign,verify,encode)
 import Data.Tagged (untag, asTaggedTypeOf, Tagged(..))
 import Crypto.Modes (cfb, unCfb, zeroIV)
 import Crypto.Types (IV)
@@ -60,20 +60,20 @@ buildKeyGen = runStateT (go (0::Int))
 find_key :: OpenPGP.Message -> String -> Maybe OpenPGP.Packet
 find_key = OpenPGP.find_key fingerprint
 
-hash :: OpenPGP.HashAlgorithm -> LZ.ByteString -> (BS.ByteString, String)
-hash OpenPGP.MD5 = hash_ (undefined :: MD5)
-hash OpenPGP.SHA1 = hash_ (undefined :: SHA1)
-hash OpenPGP.RIPEMD160 = hash_ (undefined :: RIPEMD160)
-hash OpenPGP.SHA256 = hash_ (undefined :: SHA256)
-hash OpenPGP.SHA384 = hash_ (undefined :: SHA384)
-hash OpenPGP.SHA512 = hash_ (undefined :: SHA512)
-hash OpenPGP.SHA224 = hash_ (undefined :: SHA224)
-hash _ = error "Unsupported HashAlgorithm in hash"
+pgpHash :: OpenPGP.HashAlgorithm -> LZ.ByteString -> (BS.ByteString, String)
+pgpHash OpenPGP.MD5 = formatHash . (hash :: LZ.ByteString -> MD5)
+pgpHash OpenPGP.SHA1 = formatHash . (hash :: LZ.ByteString -> SHA1)
+pgpHash OpenPGP.RIPEMD160 = formatHash . (hash :: LZ.ByteString -> RIPEMD160)
+pgpHash OpenPGP.SHA256 = formatHash . (hash :: LZ.ByteString -> SHA256)
+pgpHash OpenPGP.SHA384 = formatHash . (hash :: LZ.ByteString -> SHA384)
+pgpHash OpenPGP.SHA512 = formatHash . (hash :: LZ.ByteString -> SHA512)
+pgpHash OpenPGP.SHA224 = formatHash . (hash :: LZ.ByteString -> SHA224)
+pgpHash _ = error "Unsupported HashAlgorithm in pgpHash"
 
-hash_ :: (Hash c d) => d -> LZ.ByteString -> (BS.ByteString, String)
-hash_ d bs = (hbs, map toUpper $ pad $ hexString $ BS.unpack hbs)
+formatHash :: (Hash c d) => d -> (BS.ByteString, String)
+formatHash d = (hbs, map toUpper $ pad $ hexString $ BS.unpack hbs)
 	where
-	hbs = Serialize.encode $ hashFunc d bs
+	hbs = Serialize.encode d
 	pad s = replicate (len - length s) '0' ++ s
 	len = (outputLength `for` d) `div` 8
 
@@ -195,8 +195,8 @@ dsaKey k = DSA.PublicKey
 -- <http://tools.ietf.org/html/rfc4880#section-12.2>
 fingerprint :: OpenPGP.Packet -> String
 fingerprint p
-	| OpenPGP.version p == 4 = snd $ hash OpenPGP.SHA1 material
-	| OpenPGP.version p `elem` [2, 3] = snd $ hash OpenPGP.MD5 material
+	| OpenPGP.version p == 4 = snd $ pgpHash OpenPGP.SHA1 material
+	| OpenPGP.version p `elem` [2, 3] = snd $ pgpHash OpenPGP.MD5 material
 	| otherwise = error "Unsupported Packet version or type in fingerprint"
 	where
 	material = LZ.concat $ OpenPGP.fingerprint_material p
@@ -226,7 +226,7 @@ verifyOne keys sig over = fmap (const sig) $ maybeKey >>=
 	dsaSig = let [OpenPGP.MPI r, OpenPGP.MPI s] = OpenPGP.signature sig in
 		(r, s)
 	dsaTruncate (DSA.PublicKey (_,_,q) _) = BS.take (integerBytesize q)
-	bhash = fst . hash hash_algo . toLazyBS
+	bhash = fst . pgpHash hash_algo . toLazyBS
 	padding = emsa_pkcs1_v1_5_hash_padding hash_algo
 	hash_algo = OpenPGP.hash_algorithm sig
 	maybeKey = OpenPGP.signature_issuer sig >>= find_key keys
@@ -256,7 +256,7 @@ sign keys over hsh keyid timestamp g = (over {OpenPGP.signatures_over = [sig]}, 
 	dta     = toStrictBS $ encode over `LZ.append` OpenPGP.trailer sig
 	sig     = findSigOrDefault (listToMaybe $ OpenPGP.signatures_over over)
 	padding = emsa_pkcs1_v1_5_hash_padding hsh
-	bhash   = fst . hash hsh . toLazyBS
+	bhash   = fst . pgpHash hsh . toLazyBS
 	toNum   = BS.foldl (\a b -> a `shiftL` 8 .|. fromIntegral b) 0
 	Just k  = find_key keys keyid
 
@@ -386,7 +386,7 @@ newSession sk msg = do
 
 mkMDC :: LZ.ByteString -> LZ.ByteString -> OpenPGP.Packet
 mkMDC prefix msg = OpenPGP.ModificationDetectionCodePacket $ toLazyBS $ fst $
-	hash OpenPGP.SHA1 $ LZ.concat [prefix, msg, LZ.pack [0xD3, 0x14]]
+	pgpHash OpenPGP.SHA1 $ LZ.concat [prefix, msg, LZ.pack [0xD3, 0x14]]
 
 checksum :: BS.ByteString -> Word16
 checksum key = fromIntegral $
@@ -414,7 +414,7 @@ decryptSecretKey pass k@(OpenPGP.SecretKeyPacket {
 		(OpenPGP.secret_key_fields kalgo)) material
 	(material, chk) = LZ.splitAt (LZ.length decd - chkSize) decd
 	(chkSize, chkF)
-		| OpenPGP.s2k_useage k == 254 = (20, fst . hash OpenPGP.SHA1)
+		| OpenPGP.s2k_useage k == 254 = (20, fst . pgpHash OpenPGP.SHA1)
 		| otherwise = (2, Serialize.encode . checksum . toStrictBS)
 	decd = string2sdecrypt salgo s2k (toLazyBS pass) (EncipheredWithIV encd)
 decryptSecretKey _ _ = Nothing
@@ -550,5 +550,5 @@ string2key :: (BlockCipher k) => OpenPGP.S2K -> LZ.ByteString -> k
 string2key s2k s = k
 	where
 	Just k = buildKey $ toStrictBS $
-		LZ.take ksize $ OpenPGP.string2key (fst `oo` hash) s2k s
+		LZ.take ksize $ OpenPGP.string2key (fst `oo` pgpHash) s2k s
 	ksize = fromIntegral (keyLength `for` k) `div` 8
