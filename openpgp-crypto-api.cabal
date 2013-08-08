@@ -1,5 +1,5 @@
 name:            openpgp-crypto-api
-version:         0.6
+version:         0.6.1
 cabal-version:   >= 1.8
 license:         OtherLicense
 license-file:    COPYING
@@ -64,7 +64,7 @@ library
                 openpgp >= 0.6,
                 crypto-api >= 0.9,
                 tagged,
-                cryptocipher >= 0.3.6,
+                cryptocipher >= 0.3.6 && <= 0.3.7,
                 cryptohash,
                 cereal
 
