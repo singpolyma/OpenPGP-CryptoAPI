@@ -213,12 +213,13 @@ verify keys over =
 		(OpenPGP.signatures_over over)
 
 verifyOne :: OpenPGP.Message -> OpenPGP.Packet -> BS.ByteString -> Maybe OpenPGP.Packet
-verifyOne keys sig over = fmap (const sig) $ maybeKey >>=
-	case OpenPGP.key_algorithm sig of
-		OpenPGP.DSA -> dsaVerify
-		alg | alg `elem` [OpenPGP.RSA,OpenPGP.RSA_S] -> rsaVerify
-		    | otherwise -> const Nothing
+verifyOne keys sig over = fmap (const sig) $ maybeKey >>= verification >>= guard
 	where
+	verification =
+		case OpenPGP.key_algorithm sig of
+			OpenPGP.DSA -> dsaVerify
+			alg | alg `elem` [OpenPGP.RSA,OpenPGP.RSA_S] -> rsaVerify
+				| otherwise -> const Nothing
 	dsaVerify k = let k' = dsaKey k in
 		hush $ DSA.verify dsaSig (dsaTruncate k' . bhash) k' over
 	rsaVerify k = hush $ RSA.verify bhash padding (rsaKey k) over rsaSig
