@@ -10,6 +10,7 @@ import Data.Monoid
 import Data.List (find)
 import Crypto.Random
 import Data.Binary
+import Data.Bits (xor)
 import qualified Data.OpenPGP as OpenPGP
 import qualified Data.OpenPGP.CryptoAPI as OpenPGP
 import qualified Data.ByteString.Lazy as LZ
@@ -27,6 +28,11 @@ isLiteral :: OpenPGP.Packet -> Bool
 isLiteral (OpenPGP.LiteralDataPacket {}) = True
 isLiteral                              _ = False
 
+modifyLiteralPacket :: OpenPGP.Packet -> OpenPGP.Packet
+modifyLiteralPacket d@(OpenPGP.LiteralDataPacket { OpenPGP.content = cnt }) =
+	d { OpenPGP.content = LZ.cons 0x00 $ LZ.map (xor 0xFF) cnt }
+modifyLiteralPacket nonliteral = nonliteral
+
 testFingerprint :: FilePath -> String -> Assertion
 testFingerprint fp kf = do
 	bs <- LZ.readFile $ "tests/data/" ++ fp
@@ -40,6 +46,15 @@ testVerifyMessage keyring message = do
 	let OpenPGP.DataSignature _ ss =
 		OpenPGP.verify keys (head $ OpenPGP.signatures m)
 	assertEqual (keyring ++ " for " ++ message) 1 (length ss)
+
+testVerifyModifiedMessage :: FilePath -> FilePath -> Assertion
+testVerifyModifiedMessage keyring message = do
+	keys <- fmap decode $ LZ.readFile $ "tests/data/" ++ keyring
+	OpenPGP.Message m <- fmap decode $ LZ.readFile $ "tests/data/" ++ message
+	let corrupt_message = OpenPGP.Message (map modifyLiteralPacket m)
+	let OpenPGP.DataSignature _ ss =
+		OpenPGP.verify keys (head $ OpenPGP.signatures corrupt_message)
+	assertEqual (keyring ++ " for " ++ message) 0 (length ss)
 
 testVerifyKey :: FilePath -> Int -> Assertion
 testVerifyKey keyring count = do
@@ -117,7 +132,10 @@ tests secring oneKey rng =
 			testCase "uncompressed-ops-rsa" (testVerifyMessage "pubring.gpg" "uncompressed-ops-rsa.gpg"),
 			testCase "compressedsig" (testVerifyMessage "pubring.gpg" "compressedsig.gpg"),
 			testCase "compressedsig-zlib" (testVerifyMessage "pubring.gpg" "compressedsig-zlib.gpg"),
-			testCase "compressedsig-bzip2" (testVerifyMessage "pubring.gpg" "compressedsig-bzip2.gpg")
+			testCase "compressedsig-bzip2" (testVerifyMessage "pubring.gpg" "compressedsig-bzip2.gpg"),
+			testCase "corrupted-ops-dsa" (testVerifyModifiedMessage "pubring.gpg" "uncompressed-ops-dsa.gpg"),
+			testCase "corrupted-ops-dsa-sha384" (testVerifyModifiedMessage "pubring.gpg" "uncompressed-ops-dsa-sha384.txt.gpg"),
+			testCase "corrupted-ops-rsa" (testVerifyModifiedMessage "pubring.gpg" "uncompressed-ops-rsa.gpg")
 		],
 		testGroup "Key verification" [
 			testCase "helloKey" (testVerifyKey "helloKey.gpg" 1)
