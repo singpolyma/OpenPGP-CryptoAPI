@@ -1,20 +1,19 @@
 module Data.OpenPGP.CryptoAPI.Blowfish128 (Blowfish128) where
 
 import Crypto.Classes (BlockCipher(..))
-import Crypto.Types (BitLength)
-import Crypto.Cipher.Blowfish (Blowfish)
-import Data.Tagged (retag, Tagged(..))
+import Data.Tagged (Tagged(..))
+import qualified Crypto.Cipher.Blowfish as Blowfish
 import qualified Data.Serialize as Serialize
 
-newtype Blowfish128 = Blowfish128 Blowfish
+newtype Blowfish128 = Blowfish128 Blowfish.Blowfish
 
 instance Serialize.Serialize Blowfish128 where
 	put (Blowfish128 b) = Serialize.put b
 	get = fmap Blowfish128 Serialize.get
 
 instance BlockCipher Blowfish128 where
-	blockSize = retag (blockSize :: Tagged Blowfish BitLength)
-	encryptBlock (Blowfish128 k) = encryptBlock k
-	decryptBlock (Blowfish128 k) = decryptBlock k
-	buildKey = fmap Blowfish128 . buildKey
+	blockSize = Tagged 64
+	encryptBlock (Blowfish128 k) = Blowfish.encryptBlock k
+	decryptBlock (Blowfish128 k) = Blowfish.decryptBlock k
+	buildKey = fmap Blowfish128 . Blowfish.buildKey
 	keyLength = Tagged 128
