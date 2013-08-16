@@ -14,7 +14,8 @@ import Crypto.Classes hiding (cfb,unCfb,sign,verify,encode)
 import Data.Tagged (untag, asTaggedTypeOf, Tagged(..))
 import Crypto.Modes (cfb, unCfb, zeroIV)
 import Crypto.Types (IV)
-import Crypto.Random (CryptoRandomGen, GenError(GenErrorOther), genBytes)
+import Crypto.Random (CryptoRandomGen, GenError(GenErrorOther, NeedReseed), genBytes, reseed, reseedInfo, ReseedInfo(..))
+import Crypto.Random.API (CPRG(..), ReseedPolicy(..))
 import Crypto.Hash.MD5 (MD5)
 import Crypto.Hash.SHA1 (SHA1)
 import Crypto.Hash.RIPEMD160 (RIPEMD160)
@@ -113,6 +114,22 @@ addBitLen bytes = encode (bitLen bytes :: Word16) `LZ.append` bytes
 	bitLen bytes = (fromIntegral (LZ.length bytes) - 1) * 8 + sigBit bytes
 	sigBit bytes = fst $ until ((==0) . snd)
 		(first (+1) . second (`shiftR` 1)) (0,LZ.index bytes 0)
+
+newtype CPRGwrap g = CPRGwrap g
+instance (CryptoRandomGen g) => CPRG (CPRGwrap g) where
+	cprgNeedReseed (CPRGwrap g) = case reseedInfo g of
+		InXBytes x -> ReseedInBytes x
+		_ -> NeverReseed
+	cprgSupplyEntropy bs (CPRGwrap g) = let Right g' = reseed bs g in CPRGwrap g'
+	cprgGenBytes len (CPRGwrap g) = let Right (bs,g') = genBytes len g in (bs,CPRGwrap g')
+
+cprgCheckRSA :: (CryptoRandomGen g) => g -> Int -> Either GenError (CPRGwrap g)
+cprgCheckRSA g keySize = case reseedInfo g of
+	InXBytes x | x > fromIntegral keySize -> Right $ CPRGwrap g
+	InXCalls x | x > 0 -> Right $ CPRGwrap g
+	NotSoon -> Right $ CPRGwrap g
+	Never -> Right $ CPRGwrap g
+	_ -> Left NeedReseed
 
 -- Drops 2 because the value is an MPI
 rsaDecrypt :: RSA.PrivateKey -> BS.ByteString -> Maybe BS.ByteString
