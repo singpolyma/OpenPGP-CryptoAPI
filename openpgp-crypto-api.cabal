@@ -67,7 +67,7 @@ library
                 cipher-blowfish,
                 crypto-cipher-types,
                 crypto-random-api,
-                cryptohash <= 0.9.1,
+                cryptohash-cryptoapi,
                 cereal
 
 test-suite tests
@@ -86,7 +86,7 @@ test-suite tests
                 cipher-blowfish,
                 crypto-cipher-types,
                 crypto-random-api,
-                cryptohash <= 0.9.1,
+                cryptohash-cryptoapi,
                 cereal,
                 HUnit,
                 QuickCheck >= 2.4.1.1,
