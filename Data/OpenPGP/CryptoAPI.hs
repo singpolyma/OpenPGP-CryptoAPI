@@ -17,7 +17,6 @@ import Crypto.Types (IV)
 import Crypto.Random (CryptoRandomGen, GenError(GenErrorOther, NeedReseed), genBytes, reseed, reseedInfo, ReseedInfo(..))
 import Crypto.Random.API (CPRG(..), ReseedPolicy(..))
 import Crypto.Hash.CryptoAPI (MD5, SHA1, RIPEMD160, SHA256, SHA384, SHA512, SHA224)
-import Crypto.Cipher.AES (AES128,AES192,AES256)
 import qualified Data.Serialize as Serialize
 import qualified Crypto.Cipher.RSA as RSA
 import qualified Crypto.Cipher.DSA as DSA
@@ -26,7 +25,15 @@ import qualified Data.ByteString.Lazy as LZ
 
 import qualified Data.OpenPGP as OpenPGP
 import Data.OpenPGP.CryptoAPI.Util
-import Data.OpenPGP.CryptoAPI.Blowfish128
+
+import qualified Crypto.Cipher.AES as Cryptocipher (AES128,AES192,AES256)
+import qualified Crypto.Cipher.Blowfish as Cryptocipher
+import Data.OpenPGP.CryptoAPI.Cryptocipher
+
+type Blowfish128 = Cryptocipher Cryptocipher.Blowfish128
+type AES128 = Cryptocipher Cryptocipher.AES128
+type AES192 = Cryptocipher Cryptocipher.AES192
+type AES256 = Cryptocipher Cryptocipher.AES256
 
 -- | An encryption routine
 type Encrypt g = (LZ.ByteString -> g -> (LZ.ByteString, g))

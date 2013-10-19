@@ -54,7 +54,7 @@ library
 
         other-modules:
                 Data.OpenPGP.CryptoAPI.Util
-                Data.OpenPGP.CryptoAPI.Blowfish128
+                Data.OpenPGP.CryptoAPI.Cryptocipher
 
         build-depends:
                 base == 4.*,
@@ -64,6 +64,7 @@ library
                 openpgp >= 0.6,
                 crypto-api >= 0.12.2.2,
                 tagged,
+                cipher-aes >= 0.2.0,
                 cipher-blowfish,
                 crypto-cipher-types,
                 crypto-random-api,
@@ -83,6 +84,7 @@ test-suite tests
                 openpgp >= 0.6,
                 crypto-api >= 0.12.2.2,
                 tagged,
+                cipher-aes >= 0.2.0,
                 cipher-blowfish,
                 crypto-cipher-types,
                 crypto-random-api,
