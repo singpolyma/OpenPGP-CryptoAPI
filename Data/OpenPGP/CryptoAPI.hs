@@ -39,24 +39,6 @@ type Encrypt g = (LZ.ByteString -> g -> (LZ.ByteString, g))
 -- | A decryption routine, Bool=True to do resynchronization
 type Decrypt = (Bool -> LZ.ByteString -> (LZ.ByteString, LZ.ByteString))
 
--- Start differently-formatted section
--- | This should be in Crypto.Classes and is based on buildKeyIO
-buildKeyGen :: (BlockCipher k, CryptoRandomGen g) => g -> Either GenError (k, g)
-buildKeyGen = runStateT (go (0::Int))
-  where
-  go 1000 = lift $ Left $ GenErrorOther
-                  "Tried 1000 times to generate a key from the system entropy.\
-                  \  No keys were returned! Perhaps the system entropy is broken\
-                  \ or perhaps the BlockCipher instance being used has a non-flat\
-                  \ keyspace."
-  go i = do
-	let bs = keyLength
-	kd <- StateT $ genBytes ((7 + untag bs) `div` 8)
-	case buildKey kd of
-		Nothing -> go (i+1)
-		Just k  -> return $ k `asTaggedTypeOf` bs
--- End differently-formatted section
-
 find_key :: OpenPGP.Message -> String -> Maybe OpenPGP.Packet
 find_key = OpenPGP.find_key fingerprint
 
