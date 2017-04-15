@@ -10,7 +10,7 @@ import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT)
 import Data.Binary (encode, decode, get, Word16)
-import Crypto.Classes hiding (cfb,unCfb,sign,verify,encode)
+import Crypto.Classes hiding (cfb,unCfb,sign,verify,encode,buildKeyGen)
 import Data.Tagged (untag, asTaggedTypeOf, Tagged(..))
 import Crypto.Modes (cfb, unCfb, zeroIV)
 import Crypto.Types (IV)
